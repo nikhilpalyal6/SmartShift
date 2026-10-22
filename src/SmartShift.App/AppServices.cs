@@ -6,6 +6,7 @@ using SmartShift.Infrastructure.Logging;
 using SmartShift.Infrastructure.Output;
 using SmartShift.Processing;
 using SmartShift.Processing.Batch;
+using SmartShift.Processing.Documents;
 
 namespace SmartShift.App;
 
@@ -20,6 +21,7 @@ public sealed class AppServices : IDisposable
         Outputs = new OutputPathAllocator();
         Processors = new ProcessorCatalog(Classifier, Outputs);
         BatchEngine = new BatchImageProcessingEngine(Processors, Outputs, Classifier);
+        DocumentBuilder = new MultiImageDocumentBuilder(Outputs, Classifier);
         LogSink = new LocalFileLogSink(logger);
     }
 
@@ -29,6 +31,7 @@ public sealed class AppServices : IDisposable
     public RecommendationEngine Recommendations { get; }
     public ProcessorCatalog Processors { get; }
     public IBatchImageProcessingEngine BatchEngine { get; }
+    public IMultiImageDocumentBuilder DocumentBuilder { get; }
     public OutputPathAllocator Outputs { get; }
     public LocalFileLogSink LogSink { get; }
 

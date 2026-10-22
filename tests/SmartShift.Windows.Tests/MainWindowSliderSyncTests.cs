@@ -1657,4 +1657,132 @@ public sealed class MainWindowSliderSyncTests
             window.Close();
         });
     }
+
+    [Fact]
+    public void MainWindow_OpenAndCloseDocBuilder_TogglesVisibility()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var docHost = (Grid)typeof(MainWindow).GetField("DocumentBuilderHost", flags)!.GetValue(window)!;
+            var batchHost = (Grid)typeof(MainWindow).GetField("BatchStudioHost", flags)!.GetValue(window)!;
+
+            Assert.Equal(Visibility.Collapsed, docHost.Visibility);
+
+            window.OpenDocumentBuilder();
+            Assert.Equal(Visibility.Visible, docHost.Visibility);
+
+            // Open Batch Studio should close Document Builder
+            window.OpenBatchStudio();
+            Assert.Equal(Visibility.Visible, batchHost.Visibility);
+            Assert.Equal(Visibility.Collapsed, docHost.Visibility);
+
+            // Open Document Builder should close Batch Studio
+            window.OpenDocumentBuilder();
+            Assert.Equal(Visibility.Visible, docHost.Visibility);
+            Assert.Equal(Visibility.Collapsed, batchHost.Visibility);
+
+            window.CloseDocumentBuilder();
+            Assert.Equal(Visibility.Collapsed, docHost.Visibility);
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void MainWindow_DocBuilder_ModeSwitch_TogglesPdfAndPptxPanels()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+
+            window.OpenDocumentBuilder();
+
+            var pdfPanel = (StackPanel)typeof(MainWindow).GetField("DocBuilderPdfSettingsPanel", flags)!.GetValue(window)!;
+            var pptxPanel = (StackPanel)typeof(MainWindow).GetField("DocBuilderPptxSettingsPanel", flags)!.GetValue(window)!;
+            var exportText = (TextBlock)typeof(MainWindow).GetField("DocBuilderExportBtnText", flags)!.GetValue(window)!;
+            var pptxBtn = (Button)typeof(MainWindow).GetField("DocBuilderModePptxBtn", flags)!.GetValue(window)!;
+            var pdfBtn = (Button)typeof(MainWindow).GetField("DocBuilderModePdfBtn", flags)!.GetValue(window)!;
+
+            // Default is PDF
+            Assert.Equal(Visibility.Visible, pdfPanel.Visibility);
+            Assert.Equal(Visibility.Collapsed, pptxPanel.Visibility);
+            Assert.Equal("Build PDF", exportText.Text);
+
+            // Switch to PPTX
+            pptxBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(Visibility.Collapsed, pdfPanel.Visibility);
+            Assert.Equal(Visibility.Visible, pptxPanel.Visibility);
+            Assert.Equal("Build PPTX", exportText.Text);
+
+            // Switch back to PDF
+            pdfBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(Visibility.Visible, pdfPanel.Visibility);
+            Assert.Equal(Visibility.Collapsed, pptxPanel.Visibility);
+            Assert.Equal("Build PDF", exportText.Text);
+
+            window.CloseDocumentBuilder();
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void MainWindow_DocBuilder_ReorderAndRemove_UpdatesSequence()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var docFiles = (System.Collections.ObjectModel.ObservableCollection<DocBuilderItemViewModel>)typeof(MainWindow).GetField("_docBuilderFiles", flags)!.GetValue(window)!;
+
+            var dummy1 = new ClassifiedFile("test1.jpg", "test1.jpg", ".jpg", 100, null, DetectedFormat.Jpeg, DetectedFormat.Jpeg, ClassificationIssue.None, "Ready", 800, 600, null);
+            var dummy2 = new ClassifiedFile("test2.png", "test2.png", ".png", 200, null, DetectedFormat.Png, DetectedFormat.Png, ClassificationIssue.None, "Ready", 1024, 768, null);
+            var dummy3 = new ClassifiedFile("test3.webp", "test3.webp", ".webp", 300, null, DetectedFormat.Webp, DetectedFormat.Webp, ClassificationIssue.None, "Ready", 1200, 900, null);
+
+            docFiles.Add(new DocBuilderItemViewModel(dummy1, 1));
+            docFiles.Add(new DocBuilderItemViewModel(dummy2, 2));
+            docFiles.Add(new DocBuilderItemViewModel(dummy3, 3));
+
+            var updateSeqMethod = typeof(MainWindow).GetMethod("UpdateDocBuilderSequence", flags)!;
+            updateSeqMethod.Invoke(window, null);
+
+            Assert.Equal(3, docFiles.Count);
+            Assert.Equal("#1", docFiles[0].PositionText);
+            Assert.False(docFiles[0].CanMoveUp);
+            Assert.True(docFiles[0].CanMoveDown);
+
+            Assert.Equal("#2", docFiles[1].PositionText);
+            Assert.True(docFiles[1].CanMoveUp);
+            Assert.True(docFiles[1].CanMoveDown);
+
+            Assert.Equal("#3", docFiles[2].PositionText);
+            Assert.True(docFiles[2].CanMoveUp);
+            Assert.False(docFiles[2].CanMoveDown);
+
+            // Move item 1 (dummy2) up via DocBuilderMoveUp_Click
+            var moveUpMethod = typeof(MainWindow).GetMethod("DocBuilderMoveUp_Click", flags)!;
+            var dummyBtn = new Button { Tag = docFiles[1] };
+            moveUpMethod.Invoke(window, new object[] { dummyBtn, new RoutedEventArgs(Button.ClickEvent) });
+
+            Assert.Equal("test2.png", docFiles[0].FileName);
+            Assert.Equal("#1", docFiles[0].PositionText);
+            Assert.Equal("test1.jpg", docFiles[1].FileName);
+            Assert.Equal("#2", docFiles[1].PositionText);
+
+            // Remove an item via DocBuilderRemoveItem_Click
+            var removeMethod = typeof(MainWindow).GetMethod("DocBuilderRemoveItem_Click", flags)!;
+            var removeBtn = new Button { Tag = docFiles[0] };
+            removeMethod.Invoke(window, new object[] { removeBtn, new RoutedEventArgs(Button.ClickEvent) });
+
+            Assert.Equal(2, docFiles.Count);
+            Assert.Equal("test1.jpg", docFiles[0].FileName);
+            Assert.Equal("#1", docFiles[0].PositionText);
+            Assert.Equal("test3.webp", docFiles[1].FileName);
+            Assert.Equal("#2", docFiles[1].PositionText);
+
+            window.Close();
+        });
+    }
 }

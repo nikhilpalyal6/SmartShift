@@ -163,6 +163,15 @@
                             </Grid>
                         </Button>
 
+                        <!-- Multi-Image Document Builder Nav Item -->
+                        <Button x:Name="NavDocBuilderBtn" Style="{StaticResource NavSidebarButtonStyle}" Click="NavDocBuilder_Click" Margin="0,0,0,6"
+                                ToolTip="Document Builder: Images to PDF or PPTX">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Data="{StaticResource IconDocumentGeometry}" Fill="{DynamicResource MutedBrush}" Width="16" Height="16" Stretch="Uniform" Margin="2,0,0,0" />
+                                <TextBlock x:Name="NavDocBuilderText" Text="Doc Builder" Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12.5" Visibility="Collapsed" />
+                            </StackPanel>
+                        </Button>
+
                         <!-- Recent Files / Results -->
                         <Button x:Name="NavRecentBtn" Style="{StaticResource NavSidebarButtonStyle}" Click="NavRecent_Click" Margin="0,0,0,6"
                                 ToolTip="Recent Results (Current Session)">
@@ -262,6 +271,16 @@
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                 <Path Data="{StaticResource IconQueueGeometry}" Fill="White" Width="12" Height="12" Stretch="Uniform" Margin="0,0,6,0" />
                                 <TextBlock x:Name="ShelfBatchButtonText" Text="Batch Process Images" FontWeight="SemiBold" FontSize="11.5" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Multi-Image Document Builder Button when images exist in queue -->
+                        <Button x:Name="ShelfBuildDocButton" DockPanel.Dock="Top" Style="{StaticResource SecondaryButton}"
+                                Click="OpenDocBuilder_Click" Padding="10,7" Margin="0,0,0,10" Visibility="Collapsed"
+                                ToolTip="Combine images into a single PDF document or PowerPoint presentation">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <Path Data="{StaticResource IconDocumentGeometry}" Fill="{DynamicResource AccentBrush}" Width="12" Height="12" Stretch="Uniform" Margin="0,0,6,0" />
+                                <TextBlock x:Name="ShelfBuildDocButtonText" Text="Build Document (PDF/PPTX)" FontWeight="SemiBold" FontSize="11.5" Foreground="{DynamicResource AccentBrush}" />
                             </StackPanel>
                         </Button>
 
@@ -1537,6 +1556,405 @@
                                         </StackPanel>
                                     </Border>
                                 </Canvas>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- ==================================================== -->
+                <!-- FULL WORKSPACE MULTI-IMAGE DOCUMENT BUILDER STUDIO   -->
+                <!-- ==================================================== -->
+                <Grid Grid.Column="0" Grid.ColumnSpan="5" Panel.ZIndex="92" x:Name="DocumentBuilderHost" Visibility="Collapsed">
+                    <Border Style="{StaticResource Card}" Padding="0" ClipToBounds="True" Background="{DynamicResource SurfaceBrush}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <!-- Top Studio Toolbar -->
+                                <RowDefinition Height="Auto" />
+                                <!-- Main Studio Workspace (Collection + Live Preview + Settings) -->
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Top Toolbar -->
+                            <Border Grid.Row="0" Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="0,0,0,1" Padding="14,10">
+                                <DockPanel LastChildFill="True">
+                                    <!-- Back / Close Button -->
+                                    <Button DockPanel.Dock="Left" Style="{StaticResource SecondaryButton}" Click="CloseDocBuilder_Click"
+                                            Padding="10,6" Margin="0,0,14,0" ToolTip="Return to single-file workspace">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Data="{StaticResource IconCloseGeometry}" Fill="{DynamicResource TextBrush}" Width="10" Height="10" Stretch="Uniform" Margin="0,0,6,0" />
+                                            <TextBlock Text="Workspace" FontWeight="SemiBold" FontSize="11.5" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <!-- Right Action Buttons -->
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <Button Style="{StaticResource SecondaryButton}" Click="OpenOutputs_Click"
+                                                Padding="12,6" Margin="0,0,8,0" ToolTip="Open the SmartShift output directory in Windows Explorer">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Path Data="{StaticResource IconFolderGeometry}" Fill="{DynamicResource MutedBrush}" Width="12" Height="12" Stretch="Uniform" Margin="0,0,6,0" />
+                                                <TextBlock Text="Open Outputs" FontSize="11.5" FontWeight="SemiBold" />
+                                            </StackPanel>
+                                        </Button>
+
+                                        <!-- Build / Export Document Button -->
+                                        <Button x:Name="DocBuilderExportBtn" Style="{StaticResource PrimaryButton}" Click="ExportDocument_Click"
+                                                Padding="16,6" ToolTip="Generate document with current settings">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Path Data="{StaticResource IconDocumentGeometry}" Fill="White" Width="13" Height="13" Stretch="Uniform" Margin="0,0,6,0" />
+                                                <TextBlock x:Name="DocBuilderExportBtnText" Text="Build PDF" FontWeight="Bold" FontSize="12" />
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+
+                                    <!-- Mode Switcher & Title in Center/Left -->
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Path Data="{StaticResource IconDocumentGeometry}" Fill="{DynamicResource AccentBrush}" Width="16" Height="16" Stretch="Uniform" Margin="0,0,8,0" />
+                                        <TextBlock Text="Document Builder" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource TextBrush}" Margin="0,0,14,0" />
+
+                                        <!-- Mode Toggle Buttons -->
+                                        <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="2" Margin="0,0,12,0">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Button x:Name="DocBuilderModePdfBtn" Style="{StaticResource PrimaryButton}" Padding="10,4" Click="DocBuilderModePdf_Click" ToolTip="Assemble images into one PDF document">
+                                                    <TextBlock Text="PDF Document" FontSize="11" FontWeight="SemiBold" />
+                                                </Button>
+                                                <Button x:Name="DocBuilderModePptxBtn" Style="{StaticResource SecondaryButton}" Padding="10,4" Margin="2,0,0,0" Click="DocBuilderModePptx_Click" ToolTip="Assemble images into one PowerPoint (PPTX) presentation">
+                                                    <TextBlock Text="PowerPoint (PPTX)" FontSize="11" FontWeight="SemiBold" />
+                                                </Button>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- Item count pill -->
+                                        <Border x:Name="DocBuilderCountBadge" Background="{DynamicResource AccentSoftBrush}" CornerRadius="6" Padding="8,3" VerticalAlignment="Center">
+                                            <TextBlock x:Name="DocBuilderCountText" Text="0 images" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+
+                            <!-- Main Content (3 Columns: Ordered Collection, Live Preview Canvas, Settings Panel) -->
+                            <Grid Grid.Row="1">
+                                <Grid.ColumnDefinitions>
+                                    <!-- Left Column: Ordered Collection & Sequencing -->
+                                    <ColumnDefinition Width="340" MinWidth="280" MaxWidth="440" />
+                                    <!-- Center Column: Document Layout & Page Preview -->
+                                    <ColumnDefinition Width="*" MinWidth="400" />
+                                    <!-- Right Column: Settings & Configuration -->
+                                    <ColumnDefinition Width="320" MinWidth="270" MaxWidth="400" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Column 0: Ordered Image Collection Panel -->
+                                <Border Grid.Column="0" Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="0,0,1,0" Padding="14">
+                                    <DockPanel LastChildFill="True">
+                                        <!-- Collection Header -->
+                                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                                            <TextBlock Text="Page / Slide Sequence" FontWeight="Bold" FontSize="12.5" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <Button Style="{StaticResource PrimaryButton}" Click="DocBuilderAddImages_Click" Padding="10,4" Margin="0,0,6,0"
+                                                        ToolTip="Add JPEG, PNG, or WebP images to the document">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Path Data="{StaticResource IconPlusGeometry}" Fill="White" Width="10" Height="10" Stretch="Uniform" Margin="0,0,4,0" />
+                                                        <TextBlock Text="Add Images" FontSize="11" FontWeight="SemiBold" />
+                                                    </StackPanel>
+                                                </Button>
+                                                <Button Style="{StaticResource GhostButton}" Click="DocBuilderClearCollection_Click" Padding="8,4"
+                                                        ToolTip="Clear image collection. Disk files are never deleted.">
+                                                    <TextBlock Text="Clear" FontSize="11" />
+                                                </Button>
+                                            </StackPanel>
+                                        </DockPanel>
+
+                                        <!-- Help Note -->
+                                        <Border DockPanel.Dock="Top" Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1" CornerRadius="6" Padding="8,5" Margin="0,0,0,10">
+                                            <TextBlock Text="Use the arrows to reorder pages/slides. Originals are never modified."
+                                                       Style="{StaticResource MutedText}" FontSize="10.5" TextWrapping="Wrap" LineHeight="14" />
+                                        </Border>
+
+                                        <!-- Empty Placeholder -->
+                                        <Border x:Name="DocBuilderEmptyPlaceholder" Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderLightBrush}"
+                                                BorderThickness="1" CornerRadius="8" Padding="24" VerticalAlignment="Center" Visibility="Collapsed">
+                                            <StackPanel HorizontalAlignment="Center">
+                                                <Path Data="{StaticResource IconUploadGeometry}" Fill="{DynamicResource MutedBrush}" Width="24" Height="24" Stretch="Uniform" Margin="0,0,0,10" HorizontalAlignment="Center" />
+                                                <TextBlock Text="No images selected" FontWeight="SemiBold" FontSize="12.5" TextAlignment="Center" Margin="0,0,0,4" />
+                                                <TextBlock Text="Add images using the button above or drag files from Explorer." Style="{StaticResource MutedText}" FontSize="11" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,12" />
+                                                <Button Style="{StaticResource PrimaryButton}" Content="Add Images" Click="DocBuilderAddImages_Click" HorizontalAlignment="Center" Padding="14,6" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- ListBox of Collection Items -->
+                                        <ListBox x:Name="DocBuilderFileList" BorderThickness="0" Background="Transparent"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                 SelectionChanged="DocBuilderFileList_SelectionChanged">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                            BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,6">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <!-- Sequence Number Badge -->
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <!-- File Info -->
+                                                                <ColumnDefinition Width="*" />
+                                                                <!-- Reorder & Remove Buttons -->
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+
+                                                            <!-- Sequence Badge -->
+                                                            <Border Grid.Column="0" Background="{DynamicResource AccentSoftBrush}" CornerRadius="5" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding PositionText}" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" />
+                                                            </Border>
+
+                                                            <!-- File Information Block -->
+                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,6,0">
+                                                                <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" FontSize="11.5"
+                                                                           TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextBrush}" />
+                                                                <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                                                    <Border Background="{Binding FormatTagBrush}" CornerRadius="3" Padding="4,1" Margin="0,0,6,0">
+                                                                        <TextBlock Text="{Binding Extension}" FontSize="9" FontWeight="Bold" Foreground="White" />
+                                                                    </Border>
+                                                                    <TextBlock Text="{Binding SizeText}" Style="{StaticResource MutedText}" FontSize="10" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                                    <TextBlock Text="{Binding DimensionsText}" Style="{StaticResource MutedText}" FontSize="10" VerticalAlignment="Center" />
+                                                                </StackPanel>
+                                                            </StackPanel>
+
+                                                            <!-- Sequence Manipulation Controls -->
+                                                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <!-- Move Up -->
+                                                                <Button Style="{StaticResource GhostButton}" Padding="4" Margin="0,0,2,0"
+                                                                        Click="DocBuilderMoveUp_Click" Tag="{Binding}" IsEnabled="{Binding CanMoveUp}"
+                                                                        ToolTip="Move up / earlier in document">
+                                                                    <Path Data="M7 14l5-5 5 5z" Fill="{DynamicResource TextBrush}" Width="11" Height="11" Stretch="Uniform" />
+                                                                </Button>
+                                                                <!-- Move Down -->
+                                                                <Button Style="{StaticResource GhostButton}" Padding="4" Margin="0,0,4,0"
+                                                                        Click="DocBuilderMoveDown_Click" Tag="{Binding}" IsEnabled="{Binding CanMoveDown}"
+                                                                        ToolTip="Move down / later in document">
+                                                                    <Path Data="M7 10l5 5 5-5z" Fill="{DynamicResource TextBrush}" Width="11" Height="11" Stretch="Uniform" />
+                                                                </Button>
+                                                                <!-- Remove Item -->
+                                                                <Button Style="{StaticResource GhostButton}" Padding="4"
+                                                                        Click="DocBuilderRemoveItem_Click" Tag="{Binding}" ToolTip="Remove from document">
+                                                                    <Path Data="{StaticResource IconCloseGeometry}" Fill="{DynamicResource MutedBrush}" Width="9" Height="9" Stretch="Uniform" />
+                                                                </Button>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </DockPanel>
+                                </Border>
+
+                                <!-- Column 1: Document Live Preview Canvas -->
+                                <Border Grid.Column="1" Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                        BorderThickness="0,0,1,0" Padding="18">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <!-- Top Preview Meta Banner -->
+                                            <RowDefinition Height="Auto" />
+                                            <!-- Interactive Render Canvas -->
+                                            <RowDefinition Height="*" />
+                                            <!-- Bottom Paging & Info Toolbar -->
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <!-- Top Preview Meta Banner -->
+                                        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock Text="Document Layout Preview" FontWeight="SemiBold" FontSize="12.5" Foreground="{DynamicResource TextBrush}" />
+                                                <Border Background="{DynamicResource SurfaceElevatedBrush}" CornerRadius="4" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock x:Name="DocBuilderPreviewMetaText" Text="PDF • A4 Portrait • Contain" FontSize="10.5" Foreground="{DynamicResource MutedBrush}" />
+                                                </Border>
+                                            </StackPanel>
+                                        </DockPanel>
+
+                                        <!-- Preview Render Canvas Container -->
+                                        <Border Grid.Row="1" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1" CornerRadius="10" ClipToBounds="True">
+                                            <Grid>
+                                                <!-- When preview has an image -->
+                                                <Image x:Name="DocBuilderPreviewImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" />
+
+                                                <!-- Placeholder when no items or preview loading -->
+                                                <Border x:Name="DocBuilderPreviewPlaceholder" Background="{DynamicResource SurfaceBrush}" Visibility="Collapsed">
+                                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                        <Path Data="{StaticResource IconDocumentGeometry}" Fill="{DynamicResource MutedBrush}" Width="36" Height="36" Stretch="Uniform" Margin="0,0,0,10" HorizontalAlignment="Center" />
+                                                        <TextBlock Text="Add images to view page preview" Style="{StaticResource MutedText}" FontSize="12" HorizontalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- Bottom Paging Toolbar -->
+                                        <DockPanel Grid.Row="2" Margin="0,12,0,0">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" DockPanel.Dock="Top">
+                                                <!-- Previous Page Button -->
+                                                <Button x:Name="DocBuilderPrevPageBtn" Style="{StaticResource SecondaryButton}" Click="DocBuilderPrevPage_Click" Padding="10,5" Margin="0,0,10,0" ToolTip="Previous page/slide">
+                                                    <Path Data="M15 18l-6-6 6-6" Stroke="{DynamicResource TextBrush}" StrokeThickness="2" Width="10" Height="10" Stretch="Uniform" />
+                                                </Button>
+
+                                                <!-- Page Indicator Text -->
+                                                <Border Background="{DynamicResource SurfaceElevatedBrush}" CornerRadius="6" Padding="12,5" VerticalAlignment="Center">
+                                                    <TextBlock x:Name="DocBuilderPageIndicatorText" Text="Page 1 of 1" FontWeight="Bold" FontSize="11.5" Foreground="{DynamicResource TextBrush}" />
+                                                </Border>
+
+                                                <!-- Next Page Button -->
+                                                <Button x:Name="DocBuilderNextPageBtn" Style="{StaticResource SecondaryButton}" Click="DocBuilderNextPage_Click" Padding="10,5" Margin="10,0,0,0" ToolTip="Next page/slide">
+                                                    <Path Data="M9 18l6-6-6-6" Stroke="{DynamicResource TextBrush}" StrokeThickness="2" Width="10" Height="10" Stretch="Uniform" />
+                                                </Button>
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Column 2: Document Configuration Panel -->
+                                <Border Grid.Column="2" Padding="16">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <StackPanel>
+                                            <!-- Document Naming -->
+                                            <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                <StackPanel>
+                                                    <TextBlock Text="Document Output Name" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,6" />
+                                                    <TextBox x:Name="DocBuilderDocNameBox" Text="SmartShift-Document" Margin="0,0,0,6" />
+                                                    <TextBlock Text="Collision-safe naming guarantees no existing file is overwritten." Style="{StaticResource MutedText}" FontSize="10" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <!-- PDF SETTINGS PANEL -->
+                                            <StackPanel x:Name="DocBuilderPdfSettingsPanel" Visibility="Visible">
+                                                <!-- Page Sizing -->
+                                                <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Page Sizing" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                                        <WrapPanel>
+                                                            <Button x:Name="DocPdfSizeA4Btn" Style="{StaticResource PrimaryButton}" Content="A4" Padding="10,5" Margin="0,0,4,4" Click="DocPdfSize_Click" Tag="A4" FontSize="11" />
+                                                            <Button x:Name="DocPdfSizeLetterBtn" Style="{StaticResource SecondaryButton}" Content="US Letter" Padding="10,5" Margin="0,0,4,4" Click="DocPdfSize_Click" Tag="Letter" FontSize="11" />
+                                                            <Button x:Name="DocPdfSizeMatchBtn" Style="{StaticResource SecondaryButton}" Content="Match Image" Padding="10,5" Margin="0,0,4,4" Click="DocPdfSize_Click" Tag="ImageMatch" FontSize="11" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- Page Orientation -->
+                                                <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Page Orientation" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                                        <WrapPanel>
+                                                            <Button x:Name="DocPdfOrientPortraitBtn" Style="{StaticResource PrimaryButton}" Content="Portrait" Padding="10,5" Margin="0,0,4,4" Click="DocPdfOrient_Click" Tag="Portrait" FontSize="11" />
+                                                            <Button x:Name="DocPdfOrientLandscapeBtn" Style="{StaticResource SecondaryButton}" Content="Landscape" Padding="10,5" Margin="0,0,4,4" Click="DocPdfOrient_Click" Tag="Landscape" FontSize="11" />
+                                                            <Button x:Name="DocPdfOrientAutoBtn" Style="{StaticResource SecondaryButton}" Content="Auto per image" Padding="10,5" Margin="0,0,4,4" Click="DocPdfOrient_Click" Tag="Auto" FontSize="11" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- Image Placement -->
+                                                <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Image Placement" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                                        <WrapPanel>
+                                                            <Button x:Name="DocPdfPlacementContainBtn" Style="{StaticResource PrimaryButton}" Content="Fit (Contain)" Padding="10,5" Margin="0,0,4,4" Click="DocPdfPlacement_Click" Tag="Contain" FontSize="11" />
+                                                            <Button x:Name="DocPdfPlacementFillBtn" Style="{StaticResource SecondaryButton}" Content="Fill (Crop)" Padding="10,5" Margin="0,0,4,4" Click="DocPdfPlacement_Click" Tag="FillCrop" FontSize="11" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- Page Margins -->
+                                                <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Page Margins" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                                        <WrapPanel>
+                                                            <Button x:Name="DocPdfMargin0Btn" Style="{StaticResource SecondaryButton}" Content="None (0)" Padding="8,4" Margin="0,0,4,4" Click="DocPdfMargin_Click" Tag="0" FontSize="10.5" />
+                                                            <Button x:Name="DocPdfMargin18Btn" Style="{StaticResource SecondaryButton}" Content="Compact (18pt)" Padding="8,4" Margin="0,0,4,4" Click="DocPdfMargin_Click" Tag="18" FontSize="10.5" />
+                                                            <Button x:Name="DocPdfMargin36Btn" Style="{StaticResource PrimaryButton}" Content="Standard (36pt)" Padding="8,4" Margin="0,0,4,4" Click="DocPdfMargin_Click" Tag="36" FontSize="10.5" />
+                                                            <Button x:Name="DocPdfMargin72Btn" Style="{StaticResource SecondaryButton}" Content="Generous (72pt)" Padding="8,4" Margin="0,0,4,4" Click="DocPdfMargin_Click" Tag="72" FontSize="10.5" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- Background Color -->
+                                                <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Page Background" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                                        <WrapPanel>
+                                                            <Button x:Name="DocPdfBgWhiteBtn" Style="{StaticResource PrimaryButton}" Content="White" Padding="10,5" Margin="0,0,4,4" Click="DocPdfBg_Click" Tag="#FFFFFF" FontSize="11" />
+                                                            <Button x:Name="DocPdfBgBlackBtn" Style="{StaticResource SecondaryButton}" Content="Black" Padding="10,5" Margin="0,0,4,4" Click="DocPdfBg_Click" Tag="#000000" FontSize="11" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+
+                                            <!-- PPTX SETTINGS PANEL -->
+                                            <StackPanel x:Name="DocBuilderPptxSettingsPanel" Visibility="Collapsed">
+                                                <!-- Slide Sizing -->
+                                                <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Slide Sizing" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                                        <WrapPanel>
+                                                            <Button x:Name="DocPptxSize16x9Btn" Style="{StaticResource PrimaryButton}" Content="16:9 Widescreen" Padding="10,5" Margin="0,0,4,4" Click="DocPptxSize_Click" Tag="Widescreen16x9" FontSize="11" />
+                                                            <Button x:Name="DocPptxSize4x3Btn" Style="{StaticResource SecondaryButton}" Content="4:3 Standard" Padding="10,5" Margin="0,0,4,4" Click="DocPptxSize_Click" Tag="Standard4x3" FontSize="11" />
+                                                            <Button x:Name="DocPptxSizeMatchBtn" Style="{StaticResource SecondaryButton}" Content="Match Image" Padding="10,5" Margin="0,0,4,4" Click="DocPptxSize_Click" Tag="ImageMatch" FontSize="11" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- Slide Image Placement -->
+                                                <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Slide Placement" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                                        <WrapPanel>
+                                                            <Button x:Name="DocPptxPlacementContainBtn" Style="{StaticResource PrimaryButton}" Content="Fit (Contain)" Padding="10,5" Margin="0,0,4,4" Click="DocPptxPlacement_Click" Tag="Contain" FontSize="11" />
+                                                            <Button x:Name="DocPptxPlacementFillBtn" Style="{StaticResource SecondaryButton}" Content="Fill (Crop)" Padding="10,5" Margin="0,0,4,4" Click="DocPptxPlacement_Click" Tag="FillCrop" FontSize="11" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- Slide Background Color -->
+                                                <Border Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                        BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Slide Background" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+                                                        <WrapPanel>
+                                                            <Button x:Name="DocPptxBgWhiteBtn" Style="{StaticResource PrimaryButton}" Content="White" Padding="10,5" Margin="0,0,4,4" Click="DocPptxBg_Click" Tag="#FFFFFF" FontSize="11" />
+                                                            <Button x:Name="DocPptxBgBlackBtn" Style="{StaticResource SecondaryButton}" Content="Black" Padding="10,5" Margin="0,0,4,4" Click="DocPptxBg_Click" Tag="#000000" FontSize="11" />
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+
+                                            <!-- Progress Status Card -->
+                                            <Border x:Name="DocBuilderProgressBlock" Background="{DynamicResource GlassCardBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,0,0,14" Visibility="Collapsed">
+                                                <StackPanel>
+                                                    <TextBlock x:Name="DocBuilderStatusText" Text="Building document…" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,6" />
+                                                    <ProgressBar x:Name="DocBuilderProgressBar" Height="4" Minimum="0" Maximum="100" Value="0"
+                                                                 Foreground="{DynamicResource AccentGradient}" Background="{DynamicResource SurfaceAltBrush}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <!-- Result Card (When Build Succeeds) -->
+                                            <Border x:Name="DocBuilderResultCard" Background="{DynamicResource OkBgBrush}" BorderBrush="{DynamicResource OkBrush}"
+                                                    BorderThickness="1" CornerRadius="10" Padding="14" Visibility="Collapsed">
+                                                <StackPanel>
+                                                    <TextBlock Text="Document Created Successfully!" FontWeight="Bold" Foreground="{DynamicResource OkBrush}" FontSize="12.5" Margin="0,0,0,4" />
+                                                    <TextBlock x:Name="DocBuilderResultPathText" Text="C:\Outputs\SmartShift-Document.pdf" FontSize="11" Foreground="{DynamicResource TextBrush}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Button Style="{StaticResource PrimaryButton}" Content="Open File" Click="DocBuilderOpenResult_Click" Padding="10,5" Margin="0,0,6,0" FontSize="11" />
+                                                        <Button Style="{StaticResource SecondaryButton}" Content="Show in Folder" Click="DocBuilderRevealResult_Click" Padding="10,5" FontSize="11" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </Border>
                             </Grid>
                         </Grid>
                     </Border>

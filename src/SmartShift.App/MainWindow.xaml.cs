@@ -12,6 +12,7 @@ using SmartShift.Core.Classification;
 using SmartShift.Core.IO;
 using SmartShift.Processing;
 using SmartShift.Processing.Batch;
+using SmartShift.Processing.Documents;
 using SmartShift.Processing.Images;
 using SmartShift.Processing.Pdf.Preview;
 using SmartShift.Windows.DragDrop;
@@ -60,6 +61,21 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _previewRenderCts;
     // Batch Image Studio state
     private readonly ObservableCollection<BatchQueueItemViewModel> _batchFiles = [];
+    // Multi-Image Document Builder state
+    private readonly ObservableCollection<DocBuilderItemViewModel> _docBuilderFiles = [];
+    private DocumentOutputMode _docBuilderMode = DocumentOutputMode.Pdf;
+    private PageSizeOption _docPageSize = PageSizeOption.A4;
+    private PageOrientationOption _docPageOrientation = PageOrientationOption.Portrait;
+    private ImagePlacementOption _docPdfPlacement = ImagePlacementOption.Contain;
+    private int _docPdfMarginPoints = 36;
+    private string _docPdfBackgroundHex = "#FFFFFF";
+    private SlideSizeOption _docSlideSize = SlideSizeOption.Widescreen16x9;
+    private ImagePlacementOption _docPptxPlacement = ImagePlacementOption.Contain;
+    private string _docPptxBackgroundHex = "#FFFFFF";
+    private int _docBuilderPreviewIndex = 0;
+    private bool _isDocBuilding;
+    private CancellationTokenSource? _docBuilderCts;
+    private string? _lastGeneratedDocumentPath;
     private CancellationTokenSource? _batchCts;
     private bool _isBatchRunning;
     private string _selectedBatchActionId = ActionIds.CompressImage;
@@ -73,12 +89,14 @@ public partial class MainWindow : Window
         RadialActionsControl.ItemsSource = _radialItems;
         ModernActionCardsControl.ItemsSource = _radialItems;
         BatchFileList.ItemsSource = _batchFiles;
+        DocBuilderFileList.ItemsSource = _docBuilderFiles;
 
         Closed += (_, _) =>
         {
             _runCts?.Cancel();
             _previewRenderCts?.Cancel();
             _batchCts?.Cancel();
+            _docBuilderCts?.Cancel();
             _diagnostics?.Close();
         };
 
@@ -1689,11 +1707,30 @@ public partial class MainWindow : Window
                 ShelfBatchButton.Visibility = Visibility.Collapsed;
             }
         }
+        if (ShelfBuildDocButton is not null)
+        {
+            if (imageCount >= 1)
+            {
+                ShelfBuildDocButton.Visibility = Visibility.Visible;
+                ShelfBuildDocButtonText.Text = $"Build Document ({imageCount} Image{(imageCount == 1 ? "" : "s")})";
+            }
+            else
+            {
+                ShelfBuildDocButton.Visibility = Visibility.Collapsed;
+            }
+        }
     }
 
     // ==========================================
     // SIDEBAR & BROWSE WORKSPACE CONTROLS
     // ==========================================
+
+    private void NavDocBuilder_Click(object sender, RoutedEventArgs e)
+    {
+        RecentResultsFlyout.Visibility = Visibility.Collapsed;
+        SettingsFlyout.Visibility = Visibility.Collapsed;
+        OpenDocumentBuilder();
+    }
 
     private void ToggleSidebar_Click(object sender, RoutedEventArgs e)
     {
@@ -1702,6 +1739,7 @@ public partial class MainWindow : Window
         var vis = _sidebarExpanded ? Visibility.Visible : Visibility.Collapsed;
         NavWorkspaceText.Visibility = vis;
         NavQueueText.Visibility = vis;
+        NavDocBuilderText.Visibility = vis;
         NavRecentText.Visibility = vis;
         NavSettingsText.Visibility = vis;
     }
@@ -1711,8 +1749,10 @@ public partial class MainWindow : Window
         RecentResultsFlyout.Visibility = Visibility.Collapsed;
         SettingsFlyout.Visibility = Visibility.Collapsed;
         CloseBatchStudio();
+        CloseDocumentBuilder();
         NavWorkspaceBtn.Tag = "Active";
         NavQueueBtn.Tag = null;
+        NavDocBuilderBtn.Tag = null;
         NavRecentBtn.Tag = null;
         NavSettingsBtn.Tag = null;
     }
@@ -2201,6 +2241,10 @@ public partial class MainWindow : Window
 
     public void OpenImageEditor(ClassifiedFile? targetFile = null)
     {
+        if (DocumentBuilderHost.Visibility == Visibility.Visible)
+        {
+            CloseDocumentBuilder();
+        }
         var file = targetFile ?? _selectedFileItem?.File;
         if (file is null || !File.Exists(file.Path))
         {
@@ -2828,6 +2872,10 @@ public partial class MainWindow : Window
         {
             CloseImageEditor();
         }
+        if (DocumentBuilderHost.Visibility == Visibility.Visible)
+        {
+            CloseDocumentBuilder();
+        }
         ClosePdfPreview();
 
         BatchStudioHost.Visibility = Visibility.Visible;
@@ -3276,6 +3324,543 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 ShowBanner($"Failed to reveal file: {ex.Message}", error: true);
+            }
+        }
+    }
+
+    // ==========================================
+    // MULTI-IMAGE DOCUMENT BUILDER STUDIO
+    // ==========================================
+
+    private void OpenDocBuilder_Click(object sender, RoutedEventArgs e) => OpenDocumentBuilder();
+
+    private void CloseDocBuilder_Click(object sender, RoutedEventArgs e) => CloseDocumentBuilder();
+
+    public void OpenDocumentBuilder()
+    {
+        if (ImageEditorHost.Visibility == Visibility.Visible)
+        {
+            CloseImageEditor();
+        }
+        if (BatchStudioHost.Visibility == Visibility.Visible)
+        {
+            CloseBatchStudio();
+        }
+        ClosePdfPreview();
+
+        DocumentBuilderHost.Visibility = Visibility.Visible;
+        NavDocBuilderBtn.Tag = "Active";
+        NavWorkspaceBtn.Tag = null;
+        NavQueueBtn.Tag = null;
+
+        // Auto-populate from workspace files if empty
+        if (_docBuilderFiles.Count == 0 && _files.Count > 0)
+        {
+            foreach (var item in _files)
+            {
+                if (item.File.Format is DetectedFormat.Jpeg or DetectedFormat.Png or DetectedFormat.Webp)
+                {
+                    if (!_docBuilderFiles.Any(b => string.Equals(b.File.Path, item.File.Path, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _docBuilderFiles.Add(new DocBuilderItemViewModel(item.File, _docBuilderFiles.Count + 1));
+                    }
+                }
+            }
+        }
+
+        UpdateDocBuilderSequence();
+        UpdateDocBuilderQueueChrome();
+        UpdateDocumentPreview();
+    }
+
+    public void CloseDocumentBuilder()
+    {
+        if (_isDocBuilding)
+        {
+            ShowBanner("A document is currently being generated. Please wait for completion.", error: false, warning: true);
+            return;
+        }
+
+        DocumentBuilderHost.Visibility = Visibility.Collapsed;
+        NavDocBuilderBtn.Tag = null;
+        NavWorkspaceBtn.Tag = "Active";
+    }
+
+    private void UpdateDocBuilderSequence()
+    {
+        for (int i = 0; i < _docBuilderFiles.Count; i++)
+        {
+            var item = _docBuilderFiles[i];
+            item.PositionIndex = i + 1;
+            item.CanMoveUp = i > 0;
+            item.CanMoveDown = i < _docBuilderFiles.Count - 1;
+        }
+    }
+
+    private void UpdateDocBuilderQueueChrome()
+    {
+        int count = _docBuilderFiles.Count;
+        DocBuilderCountText.Text = $"{count} image{(count == 1 ? "" : "s")}";
+        DocBuilderEmptyPlaceholder.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        DocBuilderFileList.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        DocBuilderExportBtn.IsEnabled = count > 0 && !_isDocBuilding;
+
+        DocBuilderPreviewMetaText.Text = _docBuilderMode == DocumentOutputMode.Pdf
+            ? $"PDF • {_docPageSize} {_docPageOrientation} • {_docPdfPlacement}"
+            : $"PPTX • {_docSlideSize} • {_docPptxPlacement}";
+    }
+
+    private void DocBuilderMoveUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: DocBuilderItemViewModel item })
+        {
+            int idx = _docBuilderFiles.IndexOf(item);
+            if (idx > 0)
+            {
+                _docBuilderFiles.Move(idx, idx - 1);
+                UpdateDocBuilderSequence();
+                _docBuilderPreviewIndex = idx - 1;
+                UpdateDocumentPreview();
+            }
+        }
+    }
+
+    private void DocBuilderMoveDown_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: DocBuilderItemViewModel item })
+        {
+            int idx = _docBuilderFiles.IndexOf(item);
+            if (idx >= 0 && idx < _docBuilderFiles.Count - 1)
+            {
+                _docBuilderFiles.Move(idx, idx + 1);
+                UpdateDocBuilderSequence();
+                _docBuilderPreviewIndex = idx + 1;
+                UpdateDocumentPreview();
+            }
+        }
+    }
+
+    private void DocBuilderRemoveItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: DocBuilderItemViewModel item })
+        {
+            _docBuilderFiles.Remove(item);
+            UpdateDocBuilderSequence();
+            UpdateDocBuilderQueueChrome();
+            if (_docBuilderPreviewIndex >= _docBuilderFiles.Count)
+            {
+                _docBuilderPreviewIndex = Math.Max(0, _docBuilderFiles.Count - 1);
+            }
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocBuilderClearCollection_Click(object sender, RoutedEventArgs e)
+    {
+        _docBuilderFiles.Clear();
+        _docBuilderPreviewIndex = 0;
+        UpdateDocBuilderQueueChrome();
+        UpdateDocumentPreview();
+    }
+
+    private void DocBuilderAddImages_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isDocBuilding)
+        {
+            ShowBanner("Cannot add files while document generation is running.", error: true);
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Multiselect = true,
+            Title = "Select Images to Add to Document",
+            Filter = "Image Files (*.jpg;*.jpeg;*.png;*.webp)|*.jpg;*.jpeg;*.png;*.webp|All Files (*.*)|*.*"
+        };
+
+        if (dialog.ShowDialog() == true && dialog.FileNames.Length > 0)
+        {
+            int addedCount = 0;
+            int duplicateCount = 0;
+
+            foreach (var path in dialog.FileNames)
+            {
+                if (!File.Exists(path)) continue;
+                if (_docBuilderFiles.Any(f => string.Equals(f.File.Path, path, StringComparison.OrdinalIgnoreCase)))
+                {
+                    duplicateCount++;
+                    continue;
+                }
+
+                var classified = App.Services.Classifier.Classify(path);
+                if (classified.Format is DetectedFormat.Jpeg or DetectedFormat.Png or DetectedFormat.Webp)
+                {
+                    _docBuilderFiles.Add(new DocBuilderItemViewModel(classified, _docBuilderFiles.Count + 1));
+                    addedCount++;
+                }
+            }
+
+            UpdateDocBuilderSequence();
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+
+            if (addedCount > 0)
+            {
+                ShowBanner($"Added {addedCount} image(s) to document builder.", error: false);
+            }
+            else if (duplicateCount > 0)
+            {
+                ShowBanner($"Selected images are already in the document ({duplicateCount} duplicate(s) ignored).", error: false, warning: true);
+            }
+        }
+    }
+
+    private void DocBuilderFileList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DocBuilderFileList.SelectedItem is DocBuilderItemViewModel item)
+        {
+            int idx = _docBuilderFiles.IndexOf(item);
+            if (idx >= 0)
+            {
+                _docBuilderPreviewIndex = idx;
+                UpdateDocumentPreview();
+            }
+        }
+    }
+
+    private void DocBuilderModePdf_Click(object sender, RoutedEventArgs e)
+    {
+        _docBuilderMode = DocumentOutputMode.Pdf;
+        DocBuilderModePdfBtn.Style = (Style)FindResource("PrimaryButton");
+        DocBuilderModePptxBtn.Style = (Style)FindResource("SecondaryButton");
+        DocBuilderPdfSettingsPanel.Visibility = Visibility.Visible;
+        DocBuilderPptxSettingsPanel.Visibility = Visibility.Collapsed;
+        DocBuilderExportBtnText.Text = "Build PDF";
+        UpdateDocBuilderQueueChrome();
+        UpdateDocumentPreview();
+    }
+
+    private void DocBuilderModePptx_Click(object sender, RoutedEventArgs e)
+    {
+        _docBuilderMode = DocumentOutputMode.Pptx;
+        DocBuilderModePdfBtn.Style = (Style)FindResource("SecondaryButton");
+        DocBuilderModePptxBtn.Style = (Style)FindResource("PrimaryButton");
+        DocBuilderPdfSettingsPanel.Visibility = Visibility.Collapsed;
+        DocBuilderPptxSettingsPanel.Visibility = Visibility.Visible;
+        DocBuilderExportBtnText.Text = "Build PPTX";
+        UpdateDocBuilderQueueChrome();
+        UpdateDocumentPreview();
+    }
+
+    private void DocPdfSize_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && Enum.TryParse<PageSizeOption>(tag, out var size))
+        {
+            _docPageSize = size;
+            DocPdfSizeA4Btn.Style = (Style)FindResource(size == PageSizeOption.A4 ? "PrimaryButton" : "SecondaryButton");
+            DocPdfSizeLetterBtn.Style = (Style)FindResource(size == PageSizeOption.Letter ? "PrimaryButton" : "SecondaryButton");
+            DocPdfSizeMatchBtn.Style = (Style)FindResource(size == PageSizeOption.ImageMatch ? "PrimaryButton" : "SecondaryButton");
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocPdfOrient_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && Enum.TryParse<PageOrientationOption>(tag, out var orient))
+        {
+            _docPageOrientation = orient;
+            DocPdfOrientPortraitBtn.Style = (Style)FindResource(orient == PageOrientationOption.Portrait ? "PrimaryButton" : "SecondaryButton");
+            DocPdfOrientLandscapeBtn.Style = (Style)FindResource(orient == PageOrientationOption.Landscape ? "PrimaryButton" : "SecondaryButton");
+            DocPdfOrientAutoBtn.Style = (Style)FindResource(orient == PageOrientationOption.Auto ? "PrimaryButton" : "SecondaryButton");
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocPdfPlacement_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && Enum.TryParse<ImagePlacementOption>(tag, out var placement))
+        {
+            _docPdfPlacement = placement;
+            DocPdfPlacementContainBtn.Style = (Style)FindResource(placement == ImagePlacementOption.Contain ? "PrimaryButton" : "SecondaryButton");
+            DocPdfPlacementFillBtn.Style = (Style)FindResource(placement == ImagePlacementOption.FillCrop ? "PrimaryButton" : "SecondaryButton");
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocPdfMargin_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && int.TryParse(tag, out var margin))
+        {
+            _docPdfMarginPoints = margin;
+            DocPdfMargin0Btn.Style = (Style)FindResource(margin == 0 ? "PrimaryButton" : "SecondaryButton");
+            DocPdfMargin18Btn.Style = (Style)FindResource(margin == 18 ? "PrimaryButton" : "SecondaryButton");
+            DocPdfMargin36Btn.Style = (Style)FindResource(margin == 36 ? "PrimaryButton" : "SecondaryButton");
+            DocPdfMargin72Btn.Style = (Style)FindResource(margin == 72 ? "PrimaryButton" : "SecondaryButton");
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocPdfBg_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string hex })
+        {
+            _docPdfBackgroundHex = hex;
+            DocPdfBgWhiteBtn.Style = (Style)FindResource(string.Equals(hex, "#FFFFFF", StringComparison.OrdinalIgnoreCase) ? "PrimaryButton" : "SecondaryButton");
+            DocPdfBgBlackBtn.Style = (Style)FindResource(string.Equals(hex, "#000000", StringComparison.OrdinalIgnoreCase) ? "PrimaryButton" : "SecondaryButton");
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocPptxSize_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && Enum.TryParse<SlideSizeOption>(tag, out var size))
+        {
+            _docSlideSize = size;
+            DocPptxSize16x9Btn.Style = (Style)FindResource(size == SlideSizeOption.Widescreen16x9 ? "PrimaryButton" : "SecondaryButton");
+            DocPptxSize4x3Btn.Style = (Style)FindResource(size == SlideSizeOption.Standard4x3 ? "PrimaryButton" : "SecondaryButton");
+            DocPptxSizeMatchBtn.Style = (Style)FindResource(size == SlideSizeOption.ImageMatch ? "PrimaryButton" : "SecondaryButton");
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocPptxPlacement_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && Enum.TryParse<ImagePlacementOption>(tag, out var placement))
+        {
+            _docPptxPlacement = placement;
+            DocPptxPlacementContainBtn.Style = (Style)FindResource(placement == ImagePlacementOption.Contain ? "PrimaryButton" : "SecondaryButton");
+            DocPptxPlacementFillBtn.Style = (Style)FindResource(placement == ImagePlacementOption.FillCrop ? "PrimaryButton" : "SecondaryButton");
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocPptxBg_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string hex })
+        {
+            _docPptxBackgroundHex = hex;
+            DocPptxBgWhiteBtn.Style = (Style)FindResource(string.Equals(hex, "#FFFFFF", StringComparison.OrdinalIgnoreCase) ? "PrimaryButton" : "SecondaryButton");
+            DocPptxBgBlackBtn.Style = (Style)FindResource(string.Equals(hex, "#000000", StringComparison.OrdinalIgnoreCase) ? "PrimaryButton" : "SecondaryButton");
+            UpdateDocBuilderQueueChrome();
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocBuilderPrevPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_docBuilderPreviewIndex > 0)
+        {
+            _docBuilderPreviewIndex--;
+            UpdateDocumentPreview();
+        }
+    }
+
+    private void DocBuilderNextPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_docBuilderPreviewIndex < _docBuilderFiles.Count - 1)
+        {
+            _docBuilderPreviewIndex++;
+            UpdateDocumentPreview();
+        }
+    }
+
+    private async void UpdateDocumentPreview()
+    {
+        if (_docBuilderFiles.Count == 0)
+        {
+            DocBuilderPreviewImage.Source = null;
+            DocBuilderPreviewPlaceholder.Visibility = Visibility.Visible;
+            DocBuilderPageIndicatorText.Text = "0 of 0";
+            DocBuilderPrevPageBtn.IsEnabled = false;
+            DocBuilderNextPageBtn.IsEnabled = false;
+            return;
+        }
+
+        DocBuilderPreviewPlaceholder.Visibility = Visibility.Collapsed;
+        _docBuilderPreviewIndex = Math.Clamp(_docBuilderPreviewIndex, 0, _docBuilderFiles.Count - 1);
+        DocBuilderPageIndicatorText.Text = $"{(_docBuilderMode == DocumentOutputMode.Pdf ? "Page" : "Slide")} {_docBuilderPreviewIndex + 1} of {_docBuilderFiles.Count}";
+        DocBuilderPrevPageBtn.IsEnabled = _docBuilderPreviewIndex > 0;
+        DocBuilderNextPageBtn.IsEnabled = _docBuilderPreviewIndex < _docBuilderFiles.Count - 1;
+
+        var targetFile = _docBuilderFiles[_docBuilderPreviewIndex].File;
+        var mode = _docBuilderMode;
+        var pageSettings = new DocumentPageSettings(
+            PageSize: _docPageSize,
+            Orientation: _docPageOrientation,
+            Placement: _docPdfPlacement,
+            MarginPoints: _docPdfMarginPoints,
+            BackgroundHex: _docPdfBackgroundHex);
+        var slideSettings = new DocumentSlideSettings(
+            SlideSize: _docSlideSize,
+            Placement: _docPptxPlacement,
+            BackgroundHex: _docPptxBackgroundHex);
+
+        try
+        {
+            var previewBitmap = await Task.Run(() => App.Services.DocumentBuilder.RenderPreview(
+                targetFile,
+                mode,
+                pageSettings,
+                slideSettings,
+                800,
+                600));
+
+            if (previewBitmap is not null)
+            {
+                using (previewBitmap)
+                {
+                    var bmp = BitmapSource.Create(
+                        previewBitmap.Width,
+                        previewBitmap.Height,
+                        96,
+                        96,
+                        PixelFormats.Bgra32,
+                        null,
+                        previewBitmap.GetPixels(),
+                        previewBitmap.ByteCount,
+                        previewBitmap.RowBytes);
+                    bmp.Freeze();
+                    DocBuilderPreviewImage.Source = bmp;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Logger.Error("docbuilder", $"Failed to render preview for {targetFile.FileName}", ex);
+        }
+    }
+
+    private async void ExportDocument_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isDocBuilding || _docBuilderFiles.Count == 0) return;
+
+        _isDocBuilding = true;
+        DocBuilderProgressBlock.Visibility = Visibility.Visible;
+        DocBuilderResultCard.Visibility = Visibility.Collapsed;
+        DocBuilderProgressBar.Value = 0;
+        DocBuilderStatusText.Text = "Preparing document...";
+        DocBuilderExportBtn.IsEnabled = false;
+
+        _docBuilderCts = new CancellationTokenSource();
+        var token = _docBuilderCts.Token;
+
+        var customName = DocBuilderDocNameBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(customName))
+        {
+            customName = "SmartShift-Document";
+        }
+
+        var files = _docBuilderFiles.Select(f => f.File).ToList();
+        var mode = _docBuilderMode;
+        var pageSettings = new DocumentPageSettings(
+            PageSize: _docPageSize,
+            Orientation: _docPageOrientation,
+            Placement: _docPdfPlacement,
+            MarginPoints: _docPdfMarginPoints,
+            BackgroundHex: _docPdfBackgroundHex);
+        var slideSettings = new DocumentSlideSettings(
+            SlideSize: _docSlideSize,
+            Placement: _docPptxPlacement,
+            BackgroundHex: _docPptxBackgroundHex);
+
+        var request = new MultiImageDocumentRequest(
+            Files: files,
+            Mode: mode,
+            PageSettings: pageSettings,
+            SlideSettings: slideSettings,
+            OutputDirectory: App.Services.Outputs.RootDirectory,
+            CustomFileName: customName);
+
+        var progress = new Progress<ProcessingProgress>(p =>
+        {
+            Dispatcher.Invoke(() =>
+            {
+                DocBuilderProgressBar.Value = p.Percent;
+                DocBuilderStatusText.Text = p.Message;
+            });
+        });
+
+        try
+        {
+            var result = await Task.Run(() => App.Services.DocumentBuilder.BuildDocumentAsync(request, progress, token));
+
+            if (result.Succeeded && result.OutputPath is not null)
+            {
+                _lastGeneratedDocumentPath = result.OutputPath;
+                DocBuilderResultCard.Visibility = Visibility.Visible;
+                DocBuilderResultPathText.Text = result.OutputPath;
+                ShowBanner($"Successfully generated {Path.GetFileName(result.OutputPath)} ({result.PageOrSlideCount} {(mode == DocumentOutputMode.Pdf ? "pages" : "slides")}). Originals were not modified.", error: false);
+
+                // Ingest into SmartShift workspace queue
+                if (File.Exists(result.OutputPath))
+                {
+                    await IngestAsync([result.OutputPath]);
+                }
+            }
+            else
+            {
+                ShowBanner($"Document generation failed: {result.StatusMessage}", error: true);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            ShowBanner("Document generation was cancelled.", error: false, warning: true);
+        }
+        catch (Exception ex)
+        {
+            App.Logger.Error("docbuilder", "Unexpected error during document generation", ex);
+            ShowBanner($"Error: {ex.Message}", error: true);
+        }
+        finally
+        {
+            _isDocBuilding = false;
+            DocBuilderProgressBlock.Visibility = Visibility.Collapsed;
+            DocBuilderExportBtn.IsEnabled = true;
+        }
+    }
+
+    private void DocBuilderOpenResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_lastGeneratedDocumentPath) && File.Exists(_lastGeneratedDocumentPath))
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = _lastGeneratedDocumentPath,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                ShowBanner($"Could not open document: {ex.Message}", error: true);
+            }
+        }
+    }
+
+    private void DocBuilderRevealResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_lastGeneratedDocumentPath) && File.Exists(_lastGeneratedDocumentPath))
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{_lastGeneratedDocumentPath}\"",
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                ShowBanner($"Could not reveal file in folder: {ex.Message}", error: true);
             }
         }
     }

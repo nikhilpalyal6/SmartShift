@@ -1,0 +1,36 @@
+## Build
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.vspscc
+*.vssscc
+.vs/
+*.nupkg
+*.snupkg
+project.lock.json
+artifacts/
+
+## Test
+TestResults/
+*.trx
+*.coverage
+coverage/
+
+## OS / IDE
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+*.code-workspace
+
+## Local logs, output and scratch files
+logs/
+*.log
+scratch/
+Output/
+output/

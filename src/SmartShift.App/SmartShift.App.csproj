@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ApplicationTitle>SmartShift</ApplicationTitle>
+    <RootNamespace>SmartShift.App</RootNamespace>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SmartShift.Core\SmartShift.Core.csproj" />
+    <ProjectReference Include="..\SmartShift.Windows\SmartShift.Windows.csproj" />
+    <ProjectReference Include="..\SmartShift.Processing\SmartShift.Processing.csproj" />
+    <ProjectReference Include="..\SmartShift.Infrastructure\SmartShift.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

@@ -54,11 +54,21 @@ public sealed class FileClassifierTests
     [Fact]
     public void Classify_UnknownExtensionAndInvalidContent()
     {
-        using var txt = SampleFiles.Text("notes.txt", "hello");
-        var result = _classifier.Classify(txt.Path);
+        using var unknown = SampleFiles.Bytes("notes.unknown", [0x01, 0x02, 0x03, 0x00]);
+        var result = _classifier.Classify(unknown.Path);
         Assert.Equal(DetectedFormat.Unknown, result.Format);
         Assert.Equal(ClassificationIssue.UnknownFormat, result.Issue);
         Assert.False(result.IsSupportedCategory);
+    }
+
+    [Fact]
+    public void Classify_Txt_ValidContent_IsDetected()
+    {
+        using var txt = SampleFiles.Text("notes.txt", "hello");
+        var result = _classifier.Classify(txt.Path);
+        Assert.Equal(DetectedFormat.Txt, result.Format);
+        Assert.Equal(ClassificationIssue.None, result.Issue);
+        Assert.True(result.IsSupported);
     }
 
     [Fact]

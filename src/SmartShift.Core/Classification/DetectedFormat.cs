@@ -10,5 +10,11 @@ public enum DetectedFormat
     Pdf = 5,
     Gif = 6,
     Bmp = 7,
-    Tiff = 8
+    Tiff = 8,
+    Docx = 9,
+    Pptx = 10,
+    Xlsx = 11,
+    Txt = 12,
+    Markdown = 13,
+    Zip = 14
 }

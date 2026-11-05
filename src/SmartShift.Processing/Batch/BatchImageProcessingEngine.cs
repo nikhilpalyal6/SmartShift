@@ -223,10 +223,22 @@ public sealed class BatchImageProcessingEngine : IBatchImageProcessingEngine
                         return;
                     }
 
+                    var effectiveOptions = request.Options;
+                    if (request.FileOptionOverrides != null && request.FileOptionOverrides.TryGetValue(inputFile.Path, out var overrideOpts))
+                    {
+                        effectiveOptions = overrideOpts;
+                    }
+
+                    var mergedOptions = new Dictionary<string, string>(effectiveOptions.Values, StringComparer.OrdinalIgnoreCase);
+                    if (!mergedOptions.ContainsKey("itemIndex"))
+                    {
+                        mergedOptions["itemIndex"] = index.ToString();
+                    }
+
                     var singleRequest = new ProcessingRequest(
                         inputFile,
                         request.ActionId,
-                        request.Options,
+                        new ProcessingOptions(mergedOptions),
                         request.OutputDirectory);
 
                     var result = await processor.ProcessAsync(singleRequest, null, cancellationToken).ConfigureAwait(false);

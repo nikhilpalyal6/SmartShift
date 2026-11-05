@@ -53,7 +53,49 @@ public static class ActionOptionValidator
             ValidatePdfPptx(values, errors);
         }
 
+        if (actionId == ActionIds.UnifiedConvert)
+        {
+            ValidateUnifiedConvert(values, errors);
+        }
+
         return errors;
+    }
+
+    private static void ValidateUnifiedConvert(IReadOnlyDictionary<string, string> values, List<string> errors)
+    {
+        if (!values.TryGetValue("targetFormat", out var rawTarget) || string.IsNullOrWhiteSpace(rawTarget))
+        {
+            errors.Add("A target format must be specified for conversion.");
+            return;
+        }
+
+        var target = rawTarget.Trim().ToLowerInvariant();
+        if (target is "webp" or "jpeg" or "jpg")
+        {
+            if (values.ContainsKey("quality"))
+            {
+                RequireInt(values, "quality", 1, 100, errors);
+            }
+        }
+        else if (target is "docx")
+        {
+            ValidatePdfDocx(values, errors);
+        }
+        else if (target is "pptx")
+        {
+            ValidatePdfPptx(values, errors);
+        }
+        else if (target is "txt" or "text")
+        {
+            ValidatePdfText(values, errors);
+        }
+        else if (target is "png")
+        {
+            if (values.ContainsKey("quality"))
+            {
+                RequireInt(values, "quality", 1, 100, errors);
+            }
+        }
     }
 
     private static void ValidatePdfDocx(IReadOnlyDictionary<string, string> values, List<string> errors)

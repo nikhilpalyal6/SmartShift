@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -9,7 +11,9 @@ using SkiaSharp;
 using SmartShift.App.Ui;
 using SmartShift.Core.Actions;
 using SmartShift.Core.Classification;
+using SmartShift.Core.History;
 using SmartShift.Core.IO;
+using SmartShift.Core.Workflows;
 using SmartShift.Processing;
 using SmartShift.Processing.Batch;
 using SmartShift.Processing.Documents;
@@ -90,6 +94,11 @@ public partial class MainWindow : Window
         ModernActionCardsControl.ItemsSource = _radialItems;
         BatchFileList.ItemsSource = _batchFiles;
         DocBuilderFileList.ItemsSource = _docBuilderFiles;
+        InitializePresentationStudio();
+        InitializePdfMergeStudio();
+        InitializePdfSplitStudio();
+        InitializePdfPageOrganizerStudio();
+        InitializeHistoryStudio();
 
         Closed += (_, _) =>
         {
@@ -97,6 +106,10 @@ public partial class MainWindow : Window
             _previewRenderCts?.Cancel();
             _batchCts?.Cancel();
             _docBuilderCts?.Cancel();
+            _presExportCts?.Cancel();
+            _pdfMergeCts?.Cancel();
+            _pdfSplitCts?.Cancel();
+            _docxActionCts?.Cancel();
             _diagnostics?.Close();
         };
 
@@ -215,7 +228,7 @@ public partial class MainWindow : Window
 
             RefreshQueueChrome();
             FileList.SelectedItem = _files.LastOrDefault();
-            var supported = classified.Count(c => c.IsSupportedCategory);
+            var supported = classified.Count(c => c.IsSupported);
             ShowBanner($"Added {classified.Count} item(s). {supported} recognized. Originals were not modified.", error: false);
         }
         catch (Exception ex)
@@ -246,6 +259,8 @@ public partial class MainWindow : Window
         _selectedFileItem = FileList.SelectedItem as QueuedFileItem;
         if (_selectedFileItem is null)
         {
+            DocxWorkspaceHost.Visibility = Visibility.Collapsed;
+            SmartCircleWorkspaceGrid.Visibility = Visibility.Visible;
             EmptyRadialPlaceholder.Visibility = Visibility.Visible;
             RadialMenuCanvas.Visibility = Visibility.Collapsed;
             if (CenterFileHeaderBar is not null)
@@ -256,10 +271,30 @@ public partial class MainWindow : Window
             ActionConfigPanel.Visibility = Visibility.Collapsed;
             _radialItems.Clear();
             _selectedAction = null;
+            _isUnifiedConvertActive = false;
+            if (UnifiedConvertOptionsView is not null) UnifiedConvertOptionsView.Visibility = Visibility.Collapsed;
             return;
         }
 
-        // Display radial workspace
+        // Dedicated DOCX Workspace check
+        if (_selectedFileItem.File.Format == DetectedFormat.Docx)
+        {
+            SmartCircleWorkspaceGrid.Visibility = Visibility.Collapsed;
+            EmptyRadialPlaceholder.Visibility = Visibility.Collapsed;
+            RadialMenuCanvas.Visibility = Visibility.Collapsed;
+            if (CenterFileHeaderBar is not null) CenterFileHeaderBar.Visibility = Visibility.Collapsed;
+            NoActionPlaceholder.Visibility = Visibility.Collapsed;
+            ActionConfigPanel.Visibility = Visibility.Collapsed;
+            _isUnifiedConvertActive = false;
+            if (UnifiedConvertOptionsView is not null) UnifiedConvertOptionsView.Visibility = Visibility.Collapsed;
+            DocxWorkspaceHost.Visibility = Visibility.Visible;
+            _ = LoadDocxWorkspaceAsync(_selectedFileItem.File);
+            return;
+        }
+
+        // Standard File / Radial Workspace
+        DocxWorkspaceHost.Visibility = Visibility.Collapsed;
+        SmartCircleWorkspaceGrid.Visibility = Visibility.Visible;
         EmptyRadialPlaceholder.Visibility = Visibility.Collapsed;
         RadialMenuCanvas.Visibility = Visibility.Visible;
         if (CenterFileHeaderBar is not null)
@@ -270,8 +305,15 @@ public partial class MainWindow : Window
         // Update Center Preview
         LoadCenterPreview(_selectedFileItem.File);
 
-        // Populate Radial Actions
-        PopulateRadialActions(_selectedFileItem.File);
+        if (_isUnifiedConvertActive)
+        {
+            OpenUnifiedConvert();
+        }
+        else
+        {
+            // Populate Radial Actions
+            PopulateRadialActions(_selectedFileItem.File);
+        }
     }
 
     private void LoadCenterPreview(ClassifiedFile file)
@@ -318,6 +360,16 @@ public partial class MainWindow : Window
         {
             CenterPreviewImage.Visibility = Visibility.Collapsed;
             CenterDocumentPlaceholder.Visibility = Visibility.Visible;
+            if (CenterDocIconPath is not null && TryFindResource("IconPdfGeometry") is Geometry pdfGeom)
+            {
+                CenterDocIconPath.Data = pdfGeom;
+                CenterDocIconPath.Fill = (Brush)FindResource("DangerBrush");
+            }
+            if (CenterDocIconBorder is not null)
+            {
+                CenterDocIconBorder.Background = (Brush)FindResource("DangerSoftBrush");
+                CenterDocIconBorder.BorderBrush = (Brush)FindResource("DangerBrush");
+            }
             CenterDocFormat.Text = "PDF Document";
             CenterDocVersion.Text = file.PdfVersion ?? "Standard PDF";
             CenterPreviewLabel.Text = $"PDF · {FileSizeFormatter.Format(file.LengthBytes)}";
@@ -334,8 +386,71 @@ public partial class MainWindow : Window
             CenterPreviewImage.Visibility = Visibility.Collapsed;
             CenterDocumentPlaceholder.Visibility = Visibility.Visible;
             CenterDocFormat.Text = file.DisplayType;
-            CenterDocVersion.Text = "Unsupported format";
-            CenterPreviewLabel.Text = FileSizeFormatter.Format(file.LengthBytes);
+            CenterPreviewLabel.Text = $"{file.DisplayType} · {FileSizeFormatter.Format(file.LengthBytes)}";
+
+            string iconKey = file.Category switch
+            {
+                FileCategory.Document => file.Format switch
+                {
+                    DetectedFormat.Docx => "IconWordGeometry",
+                    DetectedFormat.Txt or DetectedFormat.Markdown => "IconTextGeometry",
+                    _ => "IconDocumentGeometry"
+                },
+                FileCategory.Presentation => "IconPptxGeometry",
+                FileCategory.Spreadsheet => "IconExcelGeometry",
+                _ => "IconFileUnknownGeometry"
+            };
+
+            string brushKey = file.Category switch
+            {
+                FileCategory.Document => "AccentBrush",
+                FileCategory.Presentation => "WarnBrush",
+                FileCategory.Spreadsheet => "OkBrush",
+                _ => "MutedBrush"
+            };
+
+            string softBrushKey = file.Category switch
+            {
+                FileCategory.Document => "AccentSoftBrush",
+                FileCategory.Presentation => "WarnSoftBrush",
+                FileCategory.Spreadsheet => "OkSoftBrush",
+                _ => "SurfaceAltBrush"
+            };
+
+            if (CenterDocIconPath is not null && TryFindResource(iconKey) is Geometry geom)
+            {
+                CenterDocIconPath.Data = geom;
+                CenterDocIconPath.Fill = (Brush)FindResource(brushKey);
+            }
+
+            if (CenterDocIconBorder is not null)
+            {
+                CenterDocIconBorder.Background = (Brush)FindResource(softBrushKey);
+                CenterDocIconBorder.BorderBrush = (Brush)FindResource(brushKey);
+            }
+
+            if (file.Format is DetectedFormat.Txt or DetectedFormat.Markdown)
+            {
+                CenterDocVersion.Text = "Text Document · Preview in options or Presentation Studio";
+            }
+            else if (file.Format == DetectedFormat.Docx)
+            {
+                CenterDocVersion.Text = "No in-app preview available · Import to Presentation Studio";
+            }
+            else if (file.Format == DetectedFormat.Pptx)
+            {
+                CenterDocVersion.Text = "No in-app preview available · Presentation Deck";
+            }
+            else if (file.Format == DetectedFormat.Xlsx)
+            {
+                CenterDocVersion.Text = "No in-app preview available · Excel Spreadsheet";
+            }
+            else
+            {
+                CenterDocVersion.Text = file.Issue == ClassificationIssue.ExtensionContentMismatch
+                    ? file.Status
+                    : "No in-app preview available for this format.";
+            }
 
             if (_selectedFileItem?.Thumbnail is not null)
             {
@@ -382,6 +497,18 @@ public partial class MainWindow : Window
             HeroEditImageBtn.Visibility = (file.Format is DetectedFormat.Png or DetectedFormat.Jpeg or DetectedFormat.Webp)
                 ? Visibility.Visible : Visibility.Collapsed;
         }
+
+        if (HeroImportPresentationBtn is not null)
+        {
+            HeroImportPresentationBtn.Visibility = (file.Format is DetectedFormat.Docx or DetectedFormat.Txt or DetectedFormat.Markdown or DetectedFormat.Pdf)
+                ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (HeroConvertBtn is not null)
+        {
+            var targets = App.Services.UnifiedConversion.GetSupportedTargets(file.Format);
+            HeroConvertBtn.Visibility = targets.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private void HeroOpenPdf_Click(object sender, RoutedEventArgs e)
@@ -393,6 +520,8 @@ public partial class MainWindow : Window
         }
     }
 
+    
+
     private void HeroEditImage_Click(object sender, RoutedEventArgs e)
     {
         var editAction = _radialItems.FirstOrDefault(r => r.ActionId == ActionIds.EditImage);
@@ -403,6 +532,14 @@ public partial class MainWindow : Window
         else
         {
             OpenImageEditor();
+        }
+    }
+
+    private async void HeroImportPresentation_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedFileItem is not null && File.Exists(_selectedFileItem.File.Path))
+        {
+            await LoadDocumentIntoPresentationStudioAsync(_selectedFileItem.File.Path);
         }
     }
 
@@ -593,6 +730,8 @@ public partial class MainWindow : Window
         ResultCardHost.Visibility = Visibility.Collapsed;
 
         // Hide all option subviews first
+        _isUnifiedConvertActive = false;
+        if (UnifiedConvertOptionsView is not null) UnifiedConvertOptionsView.Visibility = Visibility.Collapsed;
         CompressOptionsView.Visibility = Visibility.Collapsed;
         WebpOptionsView.Visibility = Visibility.Collapsed;
         ResizeOptionsView.Visibility = Visibility.Collapsed;
@@ -656,6 +795,7 @@ public partial class MainWindow : Window
 
             case ActionIds.ShowImageInfo:
             case ActionIds.ShowPdfInfo:
+            case ActionIds.ShowDocumentInfo:
                 InfoOptionsView.Visibility = Visibility.Visible;
                 InfoFormatText.Text = file.DisplayType;
                 InfoDimensionsText.Text = _selectedFileItem.DimensionsText;
@@ -692,6 +832,14 @@ public partial class MainWindow : Window
             case ActionIds.PreviewPdf:
                 PdfPreviewOptionsView.Visibility = Visibility.Visible;
                 _ = OpenPdfPreviewAsync();
+                break;
+
+            case ActionIds.SplitPdf:
+                OpenPdfSplitStudio();
+                break;
+
+            case ActionIds.OrganizePdf:
+                OpenPdfOrganizeStudio();
                 break;
 
             case ActionIds.EditImage:
@@ -1191,7 +1339,18 @@ public partial class MainWindow : Window
 
     private async void RunAction_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedAction is null || _selectedFileItem is null)
+        if (_selectedFileItem is null)
+        {
+            return;
+        }
+
+        if (_isUnifiedConvertActive)
+        {
+            await RunUnifiedConvertAsync();
+            return;
+        }
+
+        if (_selectedAction is null)
         {
             return;
         }
@@ -1213,9 +1372,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_selectedAction.ActionId == ActionIds.EditImage)
+        
+
+        if (_selectedAction.ActionId == ActionIds.ImportToPresentationStudio)
         {
-            OpenImageEditor();
+            await LoadDocumentIntoPresentationStudioAsync(_selectedFileItem.File.Path);
             return;
         }
 
@@ -1237,6 +1398,9 @@ public partial class MainWindow : Window
         ProgressText.Text = "Processing…";
         ResultCardHost.Visibility = Visibility.Collapsed;
 
+        var runStopwatch = Stopwatch.StartNew();
+        var runStartedAt = DateTimeOffset.UtcNow;
+
         try
         {
             var request = new ProcessingRequest(
@@ -1256,7 +1420,25 @@ public partial class MainWindow : Window
             });
 
             var result = await processor.ProcessAsync(request, progress, token).ConfigureAwait(true);
+            runStopwatch.Stop();
             _lastOutputPath = result.OutputPath;
+
+            var opRecord = new OperationRecord(
+                Id: Guid.NewGuid().ToString("N"),
+                ActionId: _selectedAction.ActionId,
+                ActionName: _selectedAction.Title,
+                Category: _selectedFileItem.File.Format == DetectedFormat.Pdf ? OperationCategory.Pdf : (_selectedFileItem.File.Format == DetectedFormat.Docx ? OperationCategory.Document : OperationCategory.Image),
+                InputPaths: [_selectedFileItem.File.Path],
+                OutputPaths: !string.IsNullOrEmpty(result.OutputPath) ? [result.OutputPath] : [],
+                StartedAtUtc: runStartedAt,
+                CompletedAtUtc: DateTimeOffset.UtcNow,
+                Duration: runStopwatch.Elapsed,
+                Status: result.WasCancelled ? OperationStatus.Cancelled : (result.Succeeded ? OperationStatus.Completed : OperationStatus.Failed),
+                Options: new Dictionary<string, string>(values),
+                PresetName: null,
+                FailureReason: result.Succeeded ? null : result.Status,
+                RetryOfOperationId: null);
+            App.Services.HistoryStore.Record(opRecord);
 
             var summary = ProcessingResultSummary.FromResult(
                 result.Succeeded,
@@ -1289,6 +1471,24 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            runStopwatch.Stop();
+            var cancelRecord = new OperationRecord(
+                Id: Guid.NewGuid().ToString("N"),
+                ActionId: _selectedAction.ActionId,
+                ActionName: _selectedAction.Title,
+                Category: _selectedFileItem.File.Format == DetectedFormat.Pdf ? OperationCategory.Pdf : (_selectedFileItem.File.Format == DetectedFormat.Docx ? OperationCategory.Document : OperationCategory.Image),
+                InputPaths: [_selectedFileItem.File.Path],
+                OutputPaths: [],
+                StartedAtUtc: runStartedAt,
+                CompletedAtUtc: DateTimeOffset.UtcNow,
+                Duration: runStopwatch.Elapsed,
+                Status: OperationStatus.Cancelled,
+                Options: new Dictionary<string, string>(values),
+                PresetName: null,
+                FailureReason: "Operation was cancelled by user.",
+                RetryOfOperationId: null);
+            App.Services.HistoryStore.Record(cancelRecord);
+
             var cancelledSummary = new ProcessingResultSummary(
                 "The operation was cancelled.",
                 succeeded: false,
@@ -1308,6 +1508,24 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            runStopwatch.Stop();
+            var failRecord = new OperationRecord(
+                Id: Guid.NewGuid().ToString("N"),
+                ActionId: _selectedAction.ActionId,
+                ActionName: _selectedAction.Title,
+                Category: _selectedFileItem.File.Format == DetectedFormat.Pdf ? OperationCategory.Pdf : (_selectedFileItem.File.Format == DetectedFormat.Docx ? OperationCategory.Document : OperationCategory.Image),
+                InputPaths: [_selectedFileItem.File.Path],
+                OutputPaths: [],
+                StartedAtUtc: runStartedAt,
+                CompletedAtUtc: DateTimeOffset.UtcNow,
+                Duration: runStopwatch.Elapsed,
+                Status: OperationStatus.Failed,
+                Options: new Dictionary<string, string>(values),
+                PresetName: null,
+                FailureReason: ex.Message,
+                RetryOfOperationId: null);
+            App.Services.HistoryStore.Record(failRecord);
+
             App.Logger.Error("process", "Action failed.", ex);
             var errorSummary = new ProcessingResultSummary(
                 ex.Message,
@@ -1499,6 +1717,20 @@ public partial class MainWindow : Window
                 values["slideMode"] = _pdfPptxMode;
                 values["pageRange"] = string.IsNullOrWhiteSpace(PdfPptxRangeBox?.Text) ? "all" : PdfPptxRangeBox.Text.Trim();
                 break;
+
+            case ActionIds.ConvertDocxToPdf:
+                values["preferWord"] = (DocxPreferWordAppBox?.IsChecked == true).ToString();
+                break;
+
+            case ActionIds.ConvertDocxToPptx:
+                values["aspectRatio"] = (DocxPptxAspectBox?.SelectedIndex == 1) ? "4:3" : "16:9";
+                values["density"] = "Balanced";
+                break;
+
+            case ActionIds.CompressDocx:
+                values["optimizeImages"] = "true";
+                values["imageQuality"] = "75";
+                break;
         }
 
         return values;
@@ -1512,6 +1744,15 @@ public partial class MainWindow : Window
         {
             _runCts?.Cancel();
             ProgressText.Text = "Cancelling…";
+            return;
+        }
+
+        if (_isUnifiedConvertActive)
+        {
+            _isUnifiedConvertActive = false;
+            if (UnifiedConvertOptionsView is not null) UnifiedConvertOptionsView.Visibility = Visibility.Collapsed;
+            ActionConfigPanel.Visibility = Visibility.Collapsed;
+            NoActionPlaceholder.Visibility = Visibility.Visible;
             return;
         }
 
@@ -1740,6 +1981,10 @@ public partial class MainWindow : Window
         NavWorkspaceText.Visibility = vis;
         NavQueueText.Visibility = vis;
         NavDocBuilderText.Visibility = vis;
+        NavPresentationText.Visibility = vis;
+        NavPdfMergeText.Visibility = vis;
+        NavPdfSplitText.Visibility = vis;
+        NavPdfOrganizeText.Visibility = vis;
         NavRecentText.Visibility = vis;
         NavSettingsText.Visibility = vis;
     }
@@ -1750,9 +1995,17 @@ public partial class MainWindow : Window
         SettingsFlyout.Visibility = Visibility.Collapsed;
         CloseBatchStudio();
         CloseDocumentBuilder();
+        ClosePresentationStudio();
+        ClosePdfMergeStudio();
+        ClosePdfSplitStudio();
+        ClosePdfOrganizeStudio();
         NavWorkspaceBtn.Tag = "Active";
         NavQueueBtn.Tag = null;
         NavDocBuilderBtn.Tag = null;
+        NavPresentationBtn.Tag = null;
+        NavPdfMergeBtn.Tag = null;
+        NavPdfSplitBtn.Tag = null;
+        NavPdfOrganizeBtn.Tag = null;
         NavRecentBtn.Tag = null;
         NavSettingsBtn.Tag = null;
     }
@@ -1767,7 +2020,12 @@ public partial class MainWindow : Window
     private void NavRecent_Click(object sender, RoutedEventArgs e)
     {
         SettingsFlyout.Visibility = Visibility.Collapsed;
-        RecentResultsFlyout.Visibility = RecentResultsFlyout.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        var willBeVisible = RecentResultsFlyout.Visibility != Visibility.Visible;
+        RecentResultsFlyout.Visibility = willBeVisible ? Visibility.Visible : Visibility.Collapsed;
+        if (willBeVisible)
+        {
+            RefreshHistoryList();
+        }
     }
 
     private void NavSettings_Click(object sender, RoutedEventArgs e)
@@ -1792,7 +2050,7 @@ public partial class MainWindow : Window
         {
             Title = "Select files to optimize or convert",
             Multiselect = true,
-            Filter = "Supported files (*.png;*.jpg;*.jpeg;*.webp;*.pdf)|*.png;*.jpg;*.jpeg;*.webp;*.pdf|All files (*.*)|*.*"
+            Filter = App.Services.Capabilities.GetFileFilter(includeAllFiles: true)
         };
 
         if (dialog.ShowDialog(this) == true && dialog.FileNames.Length > 0)
@@ -1816,6 +2074,17 @@ public partial class MainWindow : Window
                 e.Handled = true;
             }
             return;
+        }
+
+        // Native Presentation Studio Hotkeys
+        if (PresentationStudioHost.Visibility == Visibility.Visible)
+        {
+            if (e.Key == Key.Escape)
+            {
+                ClosePresentationStudio();
+                e.Handled = true;
+                return;
+            }
         }
 
         // Native Image Editor Hotkeys
@@ -2245,6 +2514,14 @@ public partial class MainWindow : Window
         {
             CloseDocumentBuilder();
         }
+        if (PdfSplitStudioHost.Visibility == Visibility.Visible)
+        {
+            ClosePdfSplitStudio();
+        }
+        if (PdfOrganizeStudioHost.Visibility == Visibility.Visible)
+        {
+            ClosePdfOrganizeStudio();
+        }
         var file = targetFile ?? _selectedFileItem?.File;
         if (file is null || !File.Exists(file.Path))
         {
@@ -2331,11 +2608,31 @@ public partial class MainWindow : Window
 
         EditorProcessingOverlay.Visibility = Visibility.Visible;
         EditorProcessingText.Text = "Saving to output directory…";
+        var startedAt = DateTimeOffset.UtcNow;
+        var sw = Stopwatch.StartNew();
 
         try
         {
             var result = await Task.Run(() => _imageEditSession.Save(App.Services.Outputs, App.Services.Outputs.RootDirectory));
+            sw.Stop();
             EditorProcessingOverlay.Visibility = Visibility.Collapsed;
+
+            var record = new OperationRecord(
+                Id: Guid.NewGuid().ToString("N"),
+                ActionId: "image.editor.export",
+                ActionName: "Interactive Image Edit",
+                Category: OperationCategory.Image,
+                InputPaths: [_selectedFileItem.File.Path],
+                OutputPaths: !string.IsNullOrEmpty(result.OutputPath) ? [result.OutputPath] : [],
+                StartedAtUtc: startedAt,
+                CompletedAtUtc: DateTimeOffset.UtcNow,
+                Duration: sw.Elapsed,
+                Status: result.Succeeded ? OperationStatus.Completed : OperationStatus.Failed,
+                Options: new Dictionary<string, string>(),
+                PresetName: null,
+                FailureReason: result.Succeeded ? null : result.Status,
+                RetryOfOperationId: null);
+            App.Services.HistoryStore.Record(record);
 
             if (result.Succeeded)
             {
@@ -2876,11 +3173,25 @@ public partial class MainWindow : Window
         {
             CloseDocumentBuilder();
         }
+        if (PdfMergeStudioHost.Visibility == Visibility.Visible)
+        {
+            ClosePdfMergeStudio();
+        }
+        if (PdfSplitStudioHost.Visibility == Visibility.Visible)
+        {
+            ClosePdfSplitStudio();
+        }
+        if (PdfOrganizeStudioHost.Visibility == Visibility.Visible)
+        {
+            ClosePdfOrganizeStudio();
+        }
         ClosePdfPreview();
 
         BatchStudioHost.Visibility = Visibility.Visible;
         NavQueueBtn.Tag = "Active";
         NavWorkspaceBtn.Tag = null;
+        NavPdfMergeBtn.Tag = null;
+        NavPdfSplitBtn.Tag = null;
 
         // Auto-populate from workspace files if batch queue is empty
         if (_batchFiles.Count == 0 && _files.Count > 0)
@@ -2898,6 +3209,8 @@ public partial class MainWindow : Window
         }
 
         UpdateBatchQueueChrome();
+        InitializeBatchPresets();
+        UpdateBatchNamingPreview();
     }
 
     public void CloseBatchStudio()
@@ -3040,6 +3353,7 @@ public partial class MainWindow : Window
         BatchMetadataSettingsPanel.Visibility = tag == ActionIds.RemoveImageMetadata ? Visibility.Visible : Visibility.Collapsed;
 
         BatchValidationErrorText.Visibility = Visibility.Collapsed;
+        UpdateBatchNamingPreview();
     }
 
     private void BatchTargetFormat_Click(object sender, RoutedEventArgs e)
@@ -3059,6 +3373,7 @@ public partial class MainWindow : Window
             "jpeg" => "JPEG provides high compatibility. Note that transparency is flattened to opaque pixels.",
             _ => ""
         };
+        UpdateBatchNamingPreview();
     }
 
     private void BatchCompressQualitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -3145,6 +3460,37 @@ public partial class MainWindow : Window
             // No extra options required
         }
 
+        // Target file size optimization
+        if (BatchEnableTargetSizeCheck?.IsChecked == true && BatchTargetSizeBox is not null)
+        {
+            if (long.TryParse(BatchTargetSizeBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var targetVal) && targetVal > 0)
+            {
+                if (BatchTargetSizeUnitCombo?.SelectedIndex == 1) // MB
+                {
+                    targetVal *= 1024L;
+                }
+                optionsDict["targetSizeKb"] = targetVal.ToString(CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                BatchValidationErrorText.Text = "Target file size must be a positive number.";
+                BatchValidationErrorText.Visibility = Visibility.Visible;
+                return;
+            }
+        }
+
+        // Naming template
+        if (!string.IsNullOrWhiteSpace(BatchNamingTemplateBox?.Text))
+        {
+            optionsDict["namingTemplate"] = BatchNamingTemplateBox.Text.Trim();
+        }
+
+        // Strip metadata
+        if (BatchStripMetadataCheck?.IsChecked == true)
+        {
+            optionsDict["stripMetadata"] = "true";
+        }
+
         BatchValidationErrorText.Visibility = Visibility.Collapsed;
 
         int concurrency = (BatchParallelRadio.IsChecked == true) ? 2 : 1;
@@ -3212,6 +3558,8 @@ public partial class MainWindow : Window
             });
         });
 
+        var batchStart = DateTimeOffset.UtcNow;
+
         try
         {
             var summary = await App.Services.BatchEngine.ProcessBatchAsync(request, progress, token).ConfigureAwait(true);
@@ -3233,12 +3581,37 @@ public partial class MainWindow : Window
                 item.OutputPath = res.OutputPath;
                 item.ResultMessage = res.StatusMessage;
                 item.Details = res.Details;
+
+                var opStatus = res.Status == BatchItemStatus.Succeeded
+                    ? OperationStatus.Completed
+                    : (res.Status == BatchItemStatus.Cancelled ? OperationStatus.Cancelled : OperationStatus.Failed);
+
+                App.Services.HistoryStore.Record(new OperationRecord(
+                    Id: Guid.NewGuid().ToString("N"),
+                    ActionId: effectiveActionId,
+                    ActionName: $"Batch {effectiveActionId}",
+                    Category: OperationCategory.Batch,
+                    InputPaths: [item.File.Path],
+                    OutputPaths: !string.IsNullOrEmpty(res.OutputPath) ? [res.OutputPath] : [],
+                    StartedAtUtc: batchStart,
+                    CompletedAtUtc: DateTimeOffset.UtcNow,
+                    Duration: summary.Elapsed,
+                    Status: opStatus,
+                    Options: new Dictionary<string, string>(optionsDict),
+                    PresetName: null,
+                    FailureReason: res.Status == BatchItemStatus.Failed ? res.StatusMessage : null,
+                    RetryOfOperationId: null));
             }
 
             // Show summary card
             BatchSummaryCard.Visibility = Visibility.Visible;
             BatchSummaryTitleText.Text = summary.SummaryMessage;
             BatchSummaryDetailText.Text = $"{summary.SucceededCount} succeeded, {summary.FailedCount} failed, {summary.CancelledCount} cancelled in {summary.Elapsed.TotalSeconds:F1}s.";
+
+            if (BatchRetryFailedButton is not null)
+            {
+                BatchRetryFailedButton.Visibility = summary.FailedCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
 
             if (summary.AnySucceeded)
             {
@@ -3281,6 +3654,7 @@ public partial class MainWindow : Window
             BatchSelectedInspectorCard.Visibility = Visibility.Visible;
             BatchInspectorFileName.Text = item.FileName;
             BatchInspectorStatusMessage.Text = item.ResultMessage ?? $"Status: {item.StatusText}";
+            UpdateBatchInspectorMetadata(item);
 
             if (item.CanReveal)
             {
@@ -3346,12 +3720,26 @@ public partial class MainWindow : Window
         {
             CloseBatchStudio();
         }
+        if (PdfMergeStudioHost.Visibility == Visibility.Visible)
+        {
+            ClosePdfMergeStudio();
+        }
+        if (PdfSplitStudioHost.Visibility == Visibility.Visible)
+        {
+            ClosePdfSplitStudio();
+        }
+        if (PdfOrganizeStudioHost.Visibility == Visibility.Visible)
+        {
+            ClosePdfOrganizeStudio();
+        }
         ClosePdfPreview();
 
         DocumentBuilderHost.Visibility = Visibility.Visible;
         NavDocBuilderBtn.Tag = "Active";
         NavWorkspaceBtn.Tag = null;
         NavQueueBtn.Tag = null;
+        NavPdfMergeBtn.Tag = null;
+        NavPdfSplitBtn.Tag = null;
 
         // Auto-populate from workspace files if empty
         if (_docBuilderFiles.Count == 0 && _files.Count > 0)
@@ -3787,9 +4175,30 @@ public partial class MainWindow : Window
             });
         });
 
+        var docBuilderStart = DateTimeOffset.UtcNow;
+        var docBuilderSw = Stopwatch.StartNew();
+
         try
         {
             var result = await Task.Run(() => App.Services.DocumentBuilder.BuildDocumentAsync(request, progress, token));
+            docBuilderSw.Stop();
+
+            var record = new OperationRecord(
+                Id: Guid.NewGuid().ToString("N"),
+                ActionId: mode == DocumentOutputMode.Pdf ? "docbuilder.pdf" : "docbuilder.pptx",
+                ActionName: mode == DocumentOutputMode.Pdf ? "Build PDF from Images" : "Build Presentation from Images",
+                Category: OperationCategory.Document,
+                InputPaths: _docBuilderFiles.Select(f => f.File.Path).ToList(),
+                OutputPaths: !string.IsNullOrEmpty(result.OutputPath) ? [result.OutputPath] : [],
+                StartedAtUtc: docBuilderStart,
+                CompletedAtUtc: DateTimeOffset.UtcNow,
+                Duration: docBuilderSw.Elapsed,
+                Status: result.Succeeded ? OperationStatus.Completed : OperationStatus.Failed,
+                Options: new Dictionary<string, string> { ["Mode"] = mode.ToString(), ["ItemCount"] = _docBuilderFiles.Count.ToString() },
+                PresetName: null,
+                FailureReason: result.Succeeded ? null : result.StatusMessage,
+                RetryOfOperationId: null);
+            App.Services.HistoryStore.Record(record);
 
             if (result.Succeeded && result.OutputPath is not null)
             {
@@ -3811,6 +4220,23 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            docBuilderSw.Stop();
+            App.Services.HistoryStore.Record(new OperationRecord(
+                Id: Guid.NewGuid().ToString("N"),
+                ActionId: mode == DocumentOutputMode.Pdf ? "docbuilder.pdf" : "docbuilder.pptx",
+                ActionName: mode == DocumentOutputMode.Pdf ? "Build PDF from Images" : "Build Presentation from Images",
+                Category: OperationCategory.Document,
+                InputPaths: _docBuilderFiles.Select(f => f.File.Path).ToList(),
+                OutputPaths: [],
+                StartedAtUtc: docBuilderStart,
+                CompletedAtUtc: DateTimeOffset.UtcNow,
+                Duration: docBuilderSw.Elapsed,
+                Status: OperationStatus.Cancelled,
+                Options: new Dictionary<string, string> { ["Mode"] = mode.ToString(), ["ItemCount"] = _docBuilderFiles.Count.ToString() },
+                PresetName: null,
+                FailureReason: "Cancelled by user.",
+                RetryOfOperationId: null));
+
             ShowBanner("Document generation was cancelled.", error: false, warning: true);
         }
         catch (Exception ex)

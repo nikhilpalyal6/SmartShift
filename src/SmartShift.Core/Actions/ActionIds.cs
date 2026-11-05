@@ -18,6 +18,16 @@ public static class ActionIds
     public const string ConvertPdfToDocx = "pdf.convert.docx";
     public const string ConvertPdfToPptx = "pdf.convert.pptx";
     public const string PreviewPdf = "pdf.preview";
+    public const string MergePdf = "pdf.merge";
+    public const string SplitPdf = "pdf.split";
+    public const string OrganizePdf = "pdf.organize";
+
+    public const string ShowDocumentInfo = "doc.info";
+    public const string ImportToPresentationStudio = "doc.presentation.import";
+    public const string ConvertDocxToPdf = "docx.convert.pdf";
+    public const string ConvertDocxToPptx = "docx.convert.pptx";
+    public const string CompressDocx = "docx.compress";
+    public const string UnifiedConvert = "file.convert";
 }
 
 public static class GoalIds
@@ -32,4 +42,12 @@ public static class GoalIds
     public const string ExtractPdfText = "goal.pdf.extract-text";
     public const string ConvertPdfToDocx = "goal.pdf.convert-docx";
     public const string ConvertPdfToPptx = "goal.pdf.convert-pptx";
+    public const string MergePdf = "goal.pdf.merge";
+    public const string SplitPdf = "goal.pdf.split";
+    public const string OrganizePdf = "goal.pdf.organize";
+    public const string ConvertDocxToPdf = "goal.docx.convert-pdf";
+    public const string ConvertDocxToPptx = "goal.docx.convert-pptx";
+    public const string CompressDocx = "goal.docx.compress";
+    public const string ImportToPresentation = "goal.doc.presentation.import";
+    public const string UnifiedConvert = "goal.file.convert";
 }

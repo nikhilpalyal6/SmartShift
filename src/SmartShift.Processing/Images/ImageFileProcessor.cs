@@ -1,6 +1,7 @@
 using SkiaSharp;
 using SmartShift.Core.Actions;
 using SmartShift.Core.Classification;
+using SmartShift.Core.Images;
 using SmartShift.Core.IO;
 
 namespace SmartShift.Processing.Images;
@@ -63,6 +64,7 @@ public sealed class ImageFileProcessor : IFileProcessor
         using var decoded = SkiaImagePipeline.Decode(request.Input.Path, cancellationToken);
         var working = decoded.Bitmap;
         SKBitmap? resized = null;
+        SKData? encoded = null;
         string? tempPath = null;
         string? finalPath = null;
 
@@ -96,14 +98,62 @@ public sealed class ImageFileProcessor : IFileProcessor
                 working = resized;
             }
 
-            progress?.Report(new ProcessingProgress(60, "Encoding…"));
-            using var encoded = SkiaImagePipeline.Encode(working, outputFormat, quality, out var settingNote);
+            string settingNote;
+            TargetSizeOptimizationResult? targetResult = null;
+
+            long? targetBytes = null;
+            if (request.Options["targetBytes"] is string tbStr && long.TryParse(tbStr, out var tb) && tb > 0)
+            {
+                targetBytes = tb;
+            }
+            else if (request.Options["targetSizeKb"] is string tkbStr && long.TryParse(tkbStr, out var tkb) && tkb > 0)
+            {
+                targetBytes = tkb * 1024L;
+            }
+
+            if (targetBytes.HasValue)
+            {
+                progress?.Report(new ProcessingProgress(55, "Optimizing to target size…"));
+                targetResult = ImageTargetSizeOptimizer.Optimize(working, outputFormat, targetBytes.Value, cancellationToken);
+                encoded = targetResult.EncodedData;
+                settingNote = targetResult.SummaryReason;
+            }
+            else
+            {
+                progress?.Report(new ProcessingProgress(60, "Encoding…"));
+                encoded = SkiaImagePipeline.Encode(working, outputFormat, quality, out settingNote);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
 
-            var fileName = Path.GetFileNameWithoutExtension(request.Input.FileName) + suffix + SkiaImagePipeline.Extension(outputFormat);
+            var namingTemplate = request.Options["namingTemplate"];
+            int itemIndex = 0;
+            if (request.Options["itemIndex"] is string idxStr && int.TryParse(idxStr, out var parsedIdx))
+            {
+                itemIndex = parsedIdx;
+            }
+
+            string fileName;
+            if (!string.IsNullOrWhiteSpace(namingTemplate))
+            {
+                fileName = ImageNamingTemplate.Format(
+                    namingTemplate,
+                    request.Input.FileName,
+                    SkiaImagePipeline.Extension(outputFormat),
+                    itemIndex,
+                    defaultSuffix: suffix,
+                    width: working.Width,
+                    height: working.Height);
+            }
+            else
+            {
+                fileName = Path.GetFileNameWithoutExtension(request.Input.FileName) + suffix + SkiaImagePipeline.Extension(outputFormat);
+            }
+
             _allocator.EnsureRoot();
             if (!string.Equals(Path.GetFullPath(_allocator.RootDirectory), Path.GetFullPath(request.OutputDirectory), StringComparison.OrdinalIgnoreCase))
             {
+                encoded.Dispose();
                 return ProcessingResult.Fail("The output directory does not match the SmartShift output policy.");
             }
 
@@ -114,6 +164,9 @@ public sealed class ImageFileProcessor : IFileProcessor
                 encoded.SaveTo(output);
                 output.Flush(true);
             }
+
+            encoded.Dispose();
+            encoded = null;
 
             progress?.Report(new ProcessingProgress(85, "Validating output…"));
             cancellationToken.ThrowIfCancellationRequested();
@@ -151,8 +204,21 @@ public sealed class ImageFileProcessor : IFileProcessor
                 ["originalUnchanged"] = "true"
             };
 
-            if (ActionId == ActionIds.RemoveImageMetadata)
+            if (targetResult is not null)
             {
+                details["targetSizeBytes"] = targetResult.TargetBytes.ToString();
+                details["targetSize"] = FileSizeFormatter.Format(targetResult.TargetBytes);
+                details["targetAchieved"] = targetResult.TargetAchieved.ToString();
+                details["targetIterations"] = targetResult.Iterations.ToString();
+                details["targetReason"] = targetResult.SummaryReason;
+            }
+
+            var stripMetadataRequested = ActionId == ActionIds.RemoveImageMetadata ||
+                (request.Options["stripMetadata"] is string sm && bool.TryParse(sm, out var smFlag) && smFlag);
+
+            if (stripMetadataRequested)
+            {
+                details["metadataStripped"] = "true";
                 details["metadata"] = SkiaImagePipeline.ContainsExifOrGpsSignature(finalPath)
                     ? "Re-encoded without copying source EXIF/GPS/XMP chunks. Residual encoder tags may remain; this is not a claim of total metadata erasure."
                     : "Source EXIF, GPS, and XMP signatures were not found in the output. Orientation was baked into pixels.";
@@ -183,6 +249,7 @@ public sealed class ImageFileProcessor : IFileProcessor
         }
         finally
         {
+            encoded?.Dispose();
             resized?.Dispose();
         }
     }

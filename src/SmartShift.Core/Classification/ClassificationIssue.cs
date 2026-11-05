@@ -9,5 +9,7 @@ public enum ClassificationIssue
     Empty = 4,
     UnknownFormat = 5,
     ExtensionContentMismatch = 6,
-    FormatNotSupported = 7
+    FormatNotSupported = 7,
+    MalformedFile = 8,
+    CorruptedPackage = 9
 }

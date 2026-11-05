@@ -25,6 +25,27 @@ public sealed class RecommendationEngine
             return PdfActions();
         }
 
+        if ((file.Format is DetectedFormat.Docx or DetectedFormat.Txt or DetectedFormat.Markdown)
+            && file.Issue is ClassificationIssue.None or ClassificationIssue.ExtensionContentMismatch
+            && _capabilities.IsAvailable(ActionIds.ShowDocumentInfo))
+        {
+            return DocumentActions(file.Format);
+        }
+
+        if (file.Format == DetectedFormat.Pptx
+            && file.Issue is ClassificationIssue.None or ClassificationIssue.ExtensionContentMismatch
+            && _capabilities.IsAvailable(ActionIds.ShowDocumentInfo))
+        {
+            return PresentationActions();
+        }
+
+        if (file.Format == DetectedFormat.Xlsx
+            && file.Issue is ClassificationIssue.None or ClassificationIssue.ExtensionContentMismatch
+            && _capabilities.IsAvailable(ActionIds.ShowDocumentInfo))
+        {
+            return SpreadsheetActions();
+        }
+
         return [];
     }
 
@@ -88,8 +109,8 @@ public sealed class RecommendationEngine
     private IReadOnlyList<ActionRecommendation> PdfActions()
     {
         var formats = new[] { DetectedFormat.Pdf };
-        return
-        [
+        var actions = new List<ActionRecommendation>
+        {
             Create(
                 ActionIds.ShowPdfInfo,
                 "Show PDF information",
@@ -147,7 +168,143 @@ public sealed class RecommendationEngine
                 "Preview document pages",
                 formats,
                 [],
-                availableNote: "Interactive preview with page navigation and zoom.")
+                availableNote: "Interactive preview with page navigation and zoom."),
+            Create(
+                ActionIds.MergePdf,
+                "Merge with other PDFs",
+                "Combine this PDF with other PDF files in a chosen sequence using PDF Merge Studio.",
+                GoalIds.MergePdf,
+                "Merge multiple PDFs",
+                formats,
+                [],
+                availableNote: "Interactive PDF merge studio. Original files remain untouched."),
+            Create(
+                ActionIds.SplitPdf,
+                "Split & Extract Pages",
+                "Extract selected page ranges into separate PDFs or split every page into individual documents using PDF Split Studio.",
+                GoalIds.SplitPdf,
+                "Split PDF pages",
+                formats,
+                [],
+                availableNote: "Interactive PDF Split Studio. Original file remains untouched."),
+            Create(
+                ActionIds.OrganizePdf,
+                "Organize & Rotate Pages",
+                "Reorder, rotate, delete pages, and visually arrange your PDF before exporting using PDF Page Organizer Studio.",
+                GoalIds.OrganizePdf,
+                "Organize PDF pages",
+                formats,
+                [],
+                availableNote: "Interactive PDF Page Organizer Studio. Original file remains untouched.")
+        };
+
+        return actions;
+    }
+
+    private IReadOnlyList<ActionRecommendation> DocumentActions(DetectedFormat format)
+    {
+        var formats = new[] { format };
+        var list = new List<ActionRecommendation>();
+
+        if (format == DetectedFormat.Docx)
+        {
+            if (_capabilities.IsAvailable(ActionIds.ConvertDocxToPdf))
+            {
+                list.Add(Create(
+                    ActionIds.ConvertDocxToPdf,
+                    "Convert to PDF",
+                    "Convert Word document into a high-fidelity PDF, preserving paragraph structure, headings, bullet lists, and tables.",
+                    GoalIds.ConvertDocxToPdf,
+                    "Convert Word to PDF",
+                    formats,
+                    [],
+                    availableNote: "Converts Word document to PDF. Original DOCX is unchanged."));
+            }
+
+            if (_capabilities.IsAvailable(ActionIds.ConvertDocxToPptx))
+            {
+                list.Add(Create(
+                    ActionIds.ConvertDocxToPptx,
+                    "Convert to PowerPoint",
+                    "Extract document headings and paragraphs to create an editable PowerPoint presentation deck.",
+                    GoalIds.ConvertDocxToPptx,
+                    "Convert Word to PowerPoint",
+                    formats,
+                    [],
+                    availableNote: "Deterministic document-to-presentation conversion."));
+            }
+
+            if (_capabilities.IsAvailable(ActionIds.CompressDocx))
+            {
+                list.Add(Create(
+                    ActionIds.CompressDocx,
+                    "Compress Word Document",
+                    "Recompress package ZIP streams and safely optimize embedded media without removing document content.",
+                    GoalIds.CompressDocx,
+                    "Compress Word Document",
+                    formats,
+                    [],
+                    availableNote: "Safe package and media compression. Output size is verified."));
+            }
+        }
+
+        if (_capabilities.IsAvailable(ActionIds.ImportToPresentationStudio))
+        {
+            list.Add(Create(
+                ActionIds.ImportToPresentationStudio,
+                "Import to Presentation Studio",
+                "Extract document headings, paragraphs, and structure to create an editable presentation deck.",
+                GoalIds.ImportToPresentation,
+                "Create presentation deck",
+                formats,
+                [],
+                availableNote: "Interactive presentation studio import. Original file remains untouched."));
+        }
+
+        list.Add(Create(
+            ActionIds.ShowDocumentInfo,
+            "Show document information",
+            "Display detected format, file size, line counts, and metadata. The original file is not changed.",
+            GoalIds.Inspect,
+            "Inspect this file",
+            formats,
+            [],
+            availableNote: "Inspection only. No new file is written."));
+
+        return list;
+    }
+
+    private IReadOnlyList<ActionRecommendation> PresentationActions()
+    {
+        var formats = new[] { DetectedFormat.Pptx };
+        return
+        [
+            Create(
+                ActionIds.ShowDocumentInfo,
+                "Show presentation information",
+                "Display presentation package format, size, and metadata. Modifying existing PPTX presentations is not supported.",
+                GoalIds.Inspect,
+                "Inspect this file",
+                formats,
+                [],
+                availableNote: "Inspection only. Original file is not changed.")
+        ];
+    }
+
+    private IReadOnlyList<ActionRecommendation> SpreadsheetActions()
+    {
+        var formats = new[] { DetectedFormat.Xlsx };
+        return
+        [
+            Create(
+                ActionIds.ShowDocumentInfo,
+                "Show spreadsheet information",
+                "Display spreadsheet package format, size, and metadata. Spreadsheet editing and preview are not currently supported.",
+                GoalIds.Inspect,
+                "Inspect this file",
+                formats,
+                [],
+                availableNote: "Inspection only. Original file is not changed.")
         ];
     }
 

@@ -31,6 +31,7 @@ public sealed class RecommendationEngineTests
         Assert.Contains(recs, r => r.ActionId == ActionIds.ShowPdfInfo && r.IsAvailable);
         Assert.Contains(recs, r => r.ActionId == ActionIds.CompressPdf && r.IsAvailable);
         Assert.Contains(recs, r => r.ActionId == ActionIds.PreviewPdf && r.IsAvailable);
+        Assert.Contains(recs, r => r.ActionId == ActionIds.SplitPdf && r.IsAvailable);
     }
 
     [Fact]

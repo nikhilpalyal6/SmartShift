@@ -40,6 +40,9 @@ public sealed class RadialActionItem : INotifyPropertyChanged
             ActionIds.ConvertPdfToDocx => "Word",
             ActionIds.ConvertPdfToPptx => "PowerPoint",
             ActionIds.PreviewPdf => "Preview",
+            ActionIds.MergePdf => "Merge",
+            ActionIds.SplitPdf => "Split",
+            ActionIds.OrganizePdf => "Organize",
             _ => recommendation.Title
         };
 
@@ -54,6 +57,9 @@ public sealed class RadialActionItem : INotifyPropertyChanged
             ActionIds.ExtractPdfText or ActionIds.ConvertPdfToDocx => "IconDocumentGeometry",
             ActionIds.ConvertPdfToPptx => "IconPresentationGeometry",
             ActionIds.PreviewPdf => "IconEyeGeometry",
+            ActionIds.MergePdf => "IconExportGeometry",
+            ActionIds.SplitPdf => "IconSplitGeometry",
+            ActionIds.OrganizePdf => "IconOrganizerGeometry",
             _ => "IconInfoGeometry"
         };
 

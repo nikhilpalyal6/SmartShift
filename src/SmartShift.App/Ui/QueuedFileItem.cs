@@ -32,7 +32,7 @@ public sealed class QueuedFileItem : INotifyPropertyChanged
 
     public string StatusText => File.Status;
 
-    public string SupportText => File.IsSupportedCategory ? "Supported" : "Unsupported";
+    public string SupportText => File.IsSupported ? "Supported" : (File.IsRecognized ? "Recognized" : "Unsupported");
 
     public bool HasThumbnail => _thumbnail is not null;
 
@@ -64,7 +64,7 @@ public sealed class QueuedFileItem : INotifyPropertyChanged
     {
         get
         {
-            var key = File.IsSupportedCategory ? "OkSoftBrush" : "WarnSoftBrush";
+            var key = File.IsSupported ? "OkSoftBrush" : (File.IsRecognized ? "SurfaceAltBrush" : "WarnSoftBrush");
             return (Brush)System.Windows.Application.Current.FindResource(key);
         }
     }
@@ -73,7 +73,7 @@ public sealed class QueuedFileItem : INotifyPropertyChanged
     {
         get
         {
-            var key = File.IsSupportedCategory ? "OkBrush" : "WarnBrush";
+            var key = File.IsSupported ? "OkBrush" : (File.IsRecognized ? "MutedBrush" : "WarnBrush");
             return (Brush)System.Windows.Application.Current.FindResource(key);
         }
     }
@@ -88,13 +88,11 @@ public sealed class QueuedFileItem : INotifyPropertyChanged
                 DetectedFormat.Jpeg => "WarnBrush",
                 DetectedFormat.Webp => "OkBrush",
                 DetectedFormat.Pdf => "DangerBrush",
-                _ => File.Extension.ToLowerInvariant() switch
-                {
-                    ".docx" or ".doc" => "AccentBrush",
-                    ".pptx" or ".ppt" => "WarnBrush",
-                    ".xlsx" or ".xls" or ".csv" => "OkBrush",
-                    _ => "MutedBrush"
-                }
+                DetectedFormat.Docx => "AccentBrush",
+                DetectedFormat.Pptx => "WarnBrush",
+                DetectedFormat.Xlsx => "OkBrush",
+                DetectedFormat.Txt or DetectedFormat.Markdown => "AccentBrush",
+                _ => "MutedBrush"
             };
             return (Brush)System.Windows.Application.Current.FindResource(colorKey);
         }
@@ -104,6 +102,10 @@ public sealed class QueuedFileItem : INotifyPropertyChanged
     {
         DetectedFormat.Png or DetectedFormat.Jpeg or DetectedFormat.Webp or DetectedFormat.Gif or DetectedFormat.Bmp or DetectedFormat.Tiff => "Image",
         DetectedFormat.Pdf => "PDF Document",
+        DetectedFormat.Docx => "Word Document",
+        DetectedFormat.Pptx => "PowerPoint",
+        DetectedFormat.Xlsx => "Spreadsheet",
+        DetectedFormat.Txt or DetectedFormat.Markdown => "Text Document",
         _ => File.Extension.ToLowerInvariant() switch
         {
             ".docx" or ".doc" => "Word Document",
@@ -119,6 +121,10 @@ public sealed class QueuedFileItem : INotifyPropertyChanged
     {
         DetectedFormat.Png or DetectedFormat.Jpeg or DetectedFormat.Webp or DetectedFormat.Gif or DetectedFormat.Bmp or DetectedFormat.Tiff => "IconImageGeometry",
         DetectedFormat.Pdf => "IconPdfGeometry",
+        DetectedFormat.Docx => "IconWordGeometry",
+        DetectedFormat.Pptx => "IconPptxGeometry",
+        DetectedFormat.Xlsx => "IconExcelGeometry",
+        DetectedFormat.Txt or DetectedFormat.Markdown => "IconTextGeometry",
         _ => File.Extension.ToLowerInvariant() switch
         {
             ".docx" or ".doc" => "IconWordGeometry",
@@ -139,7 +145,18 @@ public sealed class QueuedFileItem : INotifyPropertyChanged
                 return $"{w} × {h} px";
             }
 
-            return File.PdfVersion ?? "";
+            if (!string.IsNullOrWhiteSpace(File.PdfVersion))
+            {
+                return File.PdfVersion;
+            }
+
+            return File.Category switch
+            {
+                FileCategory.Document => FileClassifier.FormatName(File.Format),
+                FileCategory.Presentation => "PowerPoint Slide Deck",
+                FileCategory.Spreadsheet => "Excel Workbook",
+                _ => ""
+            };
         }
     }
 

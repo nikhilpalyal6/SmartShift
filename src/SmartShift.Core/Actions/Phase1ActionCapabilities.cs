@@ -20,5 +20,7 @@ public sealed class Phase1ActionCapabilities : IActionCapabilities
             or ActionIds.ExtractPdfText
             or ActionIds.ConvertPdfToDocx
             or ActionIds.ConvertPdfToPptx
-            or ActionIds.PreviewPdf;
+            or ActionIds.PreviewPdf
+            or ActionIds.SplitPdf
+            or ActionIds.OrganizePdf;
 }

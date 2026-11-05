@@ -1,18 +1,43 @@
+using System.IO.Compression;
+using System.Text;
+
 namespace SmartShift.Core.Classification;
 
 /// <summary>
-/// Deterministic header-based classification. Reads a small prefix only; never executes files.
+/// Deterministic header-based and package-validated classification.
+/// Reads a small prefix or package directory only; never loads entire large files into memory or executes files.
 /// </summary>
-public sealed class FileClassifier
+public sealed class FileClassifier : IFileTypeDetector
 {
-    private const int HeaderSize = 32;
+    private const int HeaderSize = 64;
     private const int JpegScanLimit = 65_536;
+    private const int TextInspectionLimit = 4096;
 
     public ClassifiedFile Classify(string path)
     {
+        var result = Detect(path);
+        return new ClassifiedFile(
+            Path: result.Metadata.Path,
+            FileName: result.Metadata.FileName,
+            Extension: result.Metadata.Extension,
+            LengthBytes: result.Metadata.LengthBytes,
+            LastWriteTimeUtc: result.Metadata.LastWriteTimeUtc,
+            Format: result.Format,
+            ExtensionHint: result.ExtensionHint,
+            Issue: result.Issue,
+            Status: result.Status,
+            PixelWidth: result.Metadata.PixelWidth,
+            PixelHeight: result.Metadata.PixelHeight,
+            PdfVersion: result.Metadata.DocumentVersion,
+            ExplicitCategory: result.Category,
+            ExplicitMetadata: result.Metadata);
+    }
+
+    public FileDetectionResult Detect(string path)
+    {
         if (string.IsNullOrWhiteSpace(path))
         {
-            return Missing("(empty path)", "", "", ClassificationIssue.Missing, "No path was provided.");
+            return MissingResult("(empty path)", "", "", ClassificationIssue.Missing, "No path was provided.");
         }
 
         string fullPath;
@@ -22,7 +47,7 @@ public sealed class FileClassifier
         }
         catch (Exception ex)
         {
-            return Missing(path, Path.GetFileName(path), Path.GetExtension(path), ClassificationIssue.Inaccessible, $"The path could not be resolved. {ex.Message}");
+            return MissingResult(path, Path.GetFileName(path), Path.GetExtension(path), ClassificationIssue.Inaccessible, $"The path could not be resolved. {ex.Message}");
         }
 
         var fileName = Path.GetFileName(fullPath);
@@ -31,12 +56,21 @@ public sealed class FileClassifier
 
         if (Directory.Exists(fullPath))
         {
-            return new ClassifiedFile(fullPath, fileName, extension, 0, null, DetectedFormat.Unknown, hint, ClassificationIssue.Directory, "Folders cannot be dropped. Choose files instead.", null, null, null);
+            var dirMeta = FileMetadata.Empty(fullPath, fileName, extension);
+            return new FileDetectionResult(
+                Format: DetectedFormat.Unknown,
+                Category: FileCategory.Unknown,
+                ExtensionHint: hint,
+                Issue: ClassificationIssue.Directory,
+                Status: "Folders cannot be dropped. Choose files instead.",
+                Metadata: dirMeta,
+                IsSupported: false,
+                HasContentMismatch: false);
         }
 
         if (!File.Exists(fullPath))
         {
-            return Missing(fullPath, fileName, extension, ClassificationIssue.Missing, "The file could not be found.");
+            return MissingResult(fullPath, fileName, extension, ClassificationIssue.Missing, "The file could not be found.");
         }
 
         FileInfo info;
@@ -46,12 +80,21 @@ public sealed class FileClassifier
         }
         catch (Exception ex)
         {
-            return Missing(fullPath, fileName, extension, ClassificationIssue.Inaccessible, $"The file could not be read. {ex.Message}");
+            return MissingResult(fullPath, fileName, extension, ClassificationIssue.Inaccessible, $"The file could not be read. {ex.Message}");
         }
 
         if (info.Length == 0)
         {
-            return new ClassifiedFile(fullPath, fileName, extension, 0, info.LastWriteTimeUtc, DetectedFormat.Empty, hint, ClassificationIssue.Empty, "The file is empty.", null, null, null);
+            var emptyMeta = new FileMetadata(fullPath, fileName, extension, 0, info.LastWriteTimeUtc);
+            return new FileDetectionResult(
+                Format: DetectedFormat.Empty,
+                Category: FileCategory.Other,
+                ExtensionHint: hint,
+                Issue: ClassificationIssue.Empty,
+                Status: "The file is empty (0 bytes).",
+                Metadata: emptyMeta,
+                IsSupported: false,
+                HasContentMismatch: false);
         }
 
         byte[] header;
@@ -61,15 +104,35 @@ public sealed class FileClassifier
         }
         catch (Exception ex)
         {
-            return new ClassifiedFile(fullPath, fileName, extension, info.Length, info.LastWriteTimeUtc, DetectedFormat.Unknown, hint, ClassificationIssue.Inaccessible, $"The file could not be opened. {ex.Message}", null, null, null);
+            var inaccMeta = new FileMetadata(fullPath, fileName, extension, info.Length, info.LastWriteTimeUtc);
+            return new FileDetectionResult(
+                Format: DetectedFormat.Unknown,
+                Category: FileCategory.Unknown,
+                ExtensionHint: hint,
+                Issue: ClassificationIssue.Inaccessible,
+                Status: $"The file could not be opened. {ex.Message}",
+                Metadata: inaccMeta,
+                IsSupported: false,
+                HasContentMismatch: false);
         }
 
-        var format = Sniff(header);
+        var format = SniffBinaryHeader(header);
+        var issue = ClassificationIssue.None;
+        string? issueDetail = null;
         int? width = null;
         int? height = null;
         string? pdfVersion = null;
 
-        if (format == DetectedFormat.Png)
+        // If binary signature is PK (Zip), inspect the package structure
+        if (format == DetectedFormat.Zip)
+        {
+            format = InspectZipPackage(fullPath, out var zipIssue, out issueDetail);
+            if (zipIssue != ClassificationIssue.None)
+            {
+                issue = zipIssue;
+            }
+        }
+        else if (format == DetectedFormat.Png)
         {
             TryPngSize(header, out width, out height);
         }
@@ -85,39 +148,74 @@ public sealed class FileClassifier
         {
             pdfVersion = ReadPdfVersion(header);
         }
-
-        var issue = ClassificationIssue.None;
-        var status = $"Detected {FormatName(format)}.";
-
-        if (format == DetectedFormat.Unknown)
+        else if (format == DetectedFormat.Unknown && issue == ClassificationIssue.None)
         {
-            issue = ClassificationIssue.UnknownFormat;
-            status = "The file format was not recognized.";
-        }
-        else if (format is DetectedFormat.Gif or DetectedFormat.Bmp or DetectedFormat.Tiff)
-        {
-            issue = ClassificationIssue.FormatNotSupported;
-            status = $"{FormatName(format)} was detected, but SmartShift does not support this format yet.";
-        }
-        else if (hint != DetectedFormat.Unknown && hint != format)
-        {
-            issue = ClassificationIssue.ExtensionContentMismatch;
-            status = $"The extension suggests {FormatName(hint)}, but the contents are {FormatName(format)}.";
+            // If not a known binary format, evaluate safe text heuristics
+            var textCheck = InspectTextContent(fullPath, hint);
+            if (textCheck.IsText)
+            {
+                format = textCheck.TextFormat;
+            }
+            else if (textCheck.IsBinaryWithTextExtension)
+            {
+                issue = ClassificationIssue.MalformedFile;
+                issueDetail = "The file has a text extension but contains binary data.";
+            }
         }
 
-        return new ClassifiedFile(
+        var category = CategoryFromFormat(format);
+        var status = issueDetail ?? $"Detected {FormatName(format)}.";
+
+        if (issue == ClassificationIssue.None)
+        {
+            if (format == DetectedFormat.Unknown)
+            {
+                issue = ClassificationIssue.UnknownFormat;
+                status = "The file format was not recognized.";
+            }
+            else if (hint != DetectedFormat.Unknown && hint != format)
+            {
+                issue = ClassificationIssue.ExtensionContentMismatch;
+                status = $"The extension suggests {FormatName(hint)}, but the contents are {FormatName(format)}.";
+            }
+            else if (format is DetectedFormat.Gif or DetectedFormat.Bmp or DetectedFormat.Tiff)
+            {
+                issue = ClassificationIssue.FormatNotSupported;
+                status = $"{FormatName(format)} was detected, but SmartShift does not support this format yet.";
+            }
+            else if (format == DetectedFormat.Zip)
+            {
+                issue = ClassificationIssue.FormatNotSupported;
+                status = "ZIP archive was detected, but generic archive processing is not supported.";
+            }
+        }
+
+        var metadata = new FileMetadata(
             Path: fullPath,
             FileName: fileName,
             Extension: extension,
             LengthBytes: info.Length,
             LastWriteTimeUtc: info.LastWriteTimeUtc,
+            PixelWidth: width,
+            PixelHeight: height,
+            DocumentVersion: pdfVersion,
+            PageCount: null);
+
+        bool isSupported = (format is DetectedFormat.Png or DetectedFormat.Jpeg or DetectedFormat.Webp
+            or DetectedFormat.Pdf or DetectedFormat.Docx or DetectedFormat.Txt or DetectedFormat.Markdown or DetectedFormat.Pptx)
+            && issue is ClassificationIssue.None or ClassificationIssue.ExtensionContentMismatch;
+
+        bool hasMismatch = issue == ClassificationIssue.ExtensionContentMismatch;
+
+        return new FileDetectionResult(
             Format: format,
+            Category: category,
             ExtensionHint: hint,
             Issue: issue,
             Status: status,
-            PixelWidth: width,
-            PixelHeight: height,
-            PdfVersion: pdfVersion);
+            Metadata: metadata,
+            IsSupported: isSupported,
+            HasContentMismatch: hasMismatch);
     }
 
     public static DetectedFormat HintFromExtension(string? extension)
@@ -131,9 +229,25 @@ public sealed class FileClassifier
             ".gif" => DetectedFormat.Gif,
             ".bmp" => DetectedFormat.Bmp,
             ".tif" or ".tiff" => DetectedFormat.Tiff,
+            ".docx" => DetectedFormat.Docx,
+            ".pptx" => DetectedFormat.Pptx,
+            ".xlsx" => DetectedFormat.Xlsx,
+            ".txt" or ".text" => DetectedFormat.Txt,
+            ".md" or ".markdown" => DetectedFormat.Markdown,
+            ".zip" => DetectedFormat.Zip,
             _ => DetectedFormat.Unknown
         };
     }
+
+    public static FileCategory CategoryFromFormat(DetectedFormat format) => format switch
+    {
+        DetectedFormat.Png or DetectedFormat.Jpeg or DetectedFormat.Webp or DetectedFormat.Gif or DetectedFormat.Bmp or DetectedFormat.Tiff => FileCategory.Image,
+        DetectedFormat.Pdf or DetectedFormat.Docx or DetectedFormat.Txt or DetectedFormat.Markdown => FileCategory.Document,
+        DetectedFormat.Pptx => FileCategory.Presentation,
+        DetectedFormat.Xlsx => FileCategory.Spreadsheet,
+        DetectedFormat.Zip => FileCategory.Archive,
+        _ => FileCategory.Unknown
+    };
 
     public static string FormatName(DetectedFormat format) => format switch
     {
@@ -144,12 +258,29 @@ public sealed class FileClassifier
         DetectedFormat.Gif => "GIF",
         DetectedFormat.Bmp => "BMP",
         DetectedFormat.Tiff => "TIFF",
+        DetectedFormat.Docx => "Word (DOCX)",
+        DetectedFormat.Pptx => "PowerPoint (PPTX)",
+        DetectedFormat.Xlsx => "Excel (XLSX)",
+        DetectedFormat.Txt => "Plain Text",
+        DetectedFormat.Markdown => "Markdown",
+        DetectedFormat.Zip => "ZIP Archive",
         DetectedFormat.Empty => "an empty file",
         _ => "an unknown format"
     };
 
-    private static ClassifiedFile Missing(string path, string fileName, string extension, ClassificationIssue issue, string status)
-        => new(path, fileName, extension, 0, null, DetectedFormat.Unknown, HintFromExtension(extension), issue, status, null, null, null);
+    private static FileDetectionResult MissingResult(string path, string fileName, string extension, ClassificationIssue issue, string status)
+    {
+        var meta = FileMetadata.Empty(path, fileName, extension);
+        return new FileDetectionResult(
+            Format: DetectedFormat.Unknown,
+            Category: FileCategory.Unknown,
+            ExtensionHint: HintFromExtension(extension),
+            Issue: issue,
+            Status: status,
+            Metadata: meta,
+            IsSupported: false,
+            HasContentMismatch: false);
+    }
 
     private static byte[] ReadPrefix(string path, int count)
     {
@@ -164,8 +295,15 @@ public sealed class FileClassifier
         return buffer;
     }
 
-    private static DetectedFormat Sniff(ReadOnlySpan<byte> header)
+    private static DetectedFormat SniffBinaryHeader(ReadOnlySpan<byte> header)
     {
+        if (header.Length >= 8 &&
+            header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x43 &&
+            header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A)
+        {
+            // Note: 0x4E is 'N', 0x47 is 'G'
+        }
+
         if (header.Length >= 8 &&
             header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47 &&
             header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A)
@@ -210,7 +348,153 @@ public sealed class FileClassifier
             return DetectedFormat.Tiff;
         }
 
+        // PK ZIP header: 0x50, 0x4B, followed by 0x03,0x04 or 0x05,0x06 or 0x07,0x08
+        if (header.Length >= 4 &&
+            header[0] == 0x50 && header[1] == 0x4B &&
+            (header[2] == 0x03 || header[2] == 0x05 || header[2] == 0x07) &&
+            (header[3] == 0x04 || header[3] == 0x06 || header[3] == 0x08))
+        {
+            return DetectedFormat.Zip;
+        }
+
         return DetectedFormat.Unknown;
+    }
+
+    private static DetectedFormat InspectZipPackage(string fullPath, out ClassificationIssue issue, out string? detail)
+    {
+        issue = ClassificationIssue.None;
+        detail = null;
+
+        try
+        {
+            using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
+
+            bool hasWord = false;
+            bool hasPpt = false;
+            bool hasXl = false;
+
+            foreach (var entry in archive.Entries)
+            {
+                var name = entry.FullName.Replace('\\', '/');
+                if (name.StartsWith("word/document.xml", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("word/", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasWord = true;
+                }
+                else if (name.StartsWith("ppt/presentation.xml", StringComparison.OrdinalIgnoreCase) ||
+                         name.StartsWith("ppt/", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasPpt = true;
+                }
+                else if (name.StartsWith("xl/workbook.xml", StringComparison.OrdinalIgnoreCase) ||
+                         name.StartsWith("xl/", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasXl = true;
+                }
+            }
+
+            if (hasWord) return DetectedFormat.Docx;
+            if (hasPpt) return DetectedFormat.Pptx;
+            if (hasXl) return DetectedFormat.Xlsx;
+
+            return DetectedFormat.Zip;
+        }
+        catch (InvalidDataException ex)
+        {
+            issue = ClassificationIssue.CorruptedPackage;
+            detail = $"Corrupted package: {ex.Message}";
+            return DetectedFormat.Unknown;
+        }
+        catch (Exception ex)
+        {
+            issue = ClassificationIssue.MalformedFile;
+            detail = $"Archive package read error: {ex.Message}";
+            return DetectedFormat.Unknown;
+        }
+    }
+
+    private static (bool IsText, DetectedFormat TextFormat, bool IsBinaryWithTextExtension) InspectTextContent(string fullPath, DetectedFormat hint)
+    {
+        try
+        {
+            using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            int count = (int)Math.Min(stream.Length, TextInspectionLimit);
+            var buffer = new byte[count];
+            int read = stream.Read(buffer, 0, count);
+            if (read == 0)
+            {
+                return (false, DetectedFormat.Unknown, false);
+            }
+
+            var span = buffer.AsSpan(0, read);
+            bool isCleanText = LooksLikePlainText(span);
+
+            if (hint is DetectedFormat.Txt or DetectedFormat.Markdown)
+            {
+                if (isCleanText)
+                {
+                    return (true, hint, false);
+                }
+                else
+                {
+                    return (false, DetectedFormat.Unknown, true);
+                }
+            }
+
+            // If the file extension suggests a binary format (PDF, PNG, JPG, DOCX, etc.)
+            // but the content is purely plain text, detect it as text for mismatch reporting
+            if (hint != DetectedFormat.Unknown && isCleanText)
+            {
+                return (true, DetectedFormat.Txt, false);
+            }
+
+            return (false, DetectedFormat.Unknown, false);
+        }
+        catch
+        {
+            return (false, DetectedFormat.Unknown, false);
+        }
+    }
+
+    private static bool LooksLikePlainText(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length == 0) return false;
+
+        // Check for null bytes or excessive control characters indicating binary
+        int nonPrintable = 0;
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            byte b = bytes[i];
+            if (b == 0x00)
+            {
+                return false; // Null byte indicates binary content
+            }
+
+            // Printable ASCII, UTF-8 continuation, or standard whitespace/control (tab, CR, LF)
+            if (b < 0x09 || b == 0x0B || b == 0x0C || (b >= 0x0E && b <= 0x1F))
+            {
+                nonPrintable++;
+            }
+        }
+
+        // More than 5% control characters indicates binary
+        if (nonPrintable > bytes.Length * 0.05)
+        {
+            return false;
+        }
+
+        // Validate UTF-8 encoding
+        try
+        {
+            var utf8 = new UTF8Encoding(false, throwOnInvalidBytes: true);
+            utf8.GetCharCount(bytes.ToArray());
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void TryPngSize(ReadOnlySpan<byte> header, out int? width, out int? height)
@@ -235,7 +519,7 @@ public sealed class FileClassifier
             return;
         }
 
-        var fourcc = System.Text.Encoding.ASCII.GetString(header.Slice(12, 4));
+        var fourcc = Encoding.ASCII.GetString(header.Slice(12, 4));
         if (fourcc == "VP8X")
         {
             width = 1 + header[24] + (header[25] << 8) + (header[26] << 16);
@@ -319,7 +603,7 @@ public sealed class FileClassifier
             return null;
         }
 
-        var text = System.Text.Encoding.ASCII.GetString(header.Slice(0, Math.Min(header.Length, 16)));
+        var text = Encoding.ASCII.GetString(header.Slice(0, Math.Min(header.Length, 16)));
         var line = text.Split('\r', '\n')[0];
         return line.StartsWith("%PDF-", StringComparison.Ordinal) ? line.Trim() : null;
     }

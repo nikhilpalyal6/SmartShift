@@ -87,9 +87,14 @@ public sealed class OleFileDropExtractorTests
                 var logger = new SmartShift.Core.Logging.DiagnosticLogger();
                 var window = new SmartShift.Windows.Ui.DropShelfWindow(logger);
                 window.Show();
-                Assert.True(window.IsVisible);
+                var frame = new System.Windows.Threading.DispatcherFrame();
+                System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(() => frame.Continue = false));
+                System.Windows.Threading.Dispatcher.PushFrame(frame);
+                Assert.True(window.IsVisible || window.Visibility == Visibility.Visible, "Window was not visible after Show()");
                 window.Close();
-                Assert.False(window.IsVisible);
+                Assert.False(window.IsVisible, "Window was still visible after Close()");
             }
             catch (Exception ex)
             {

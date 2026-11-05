@@ -151,8 +151,8 @@ public sealed class MainWindowSliderSyncTests
             var radialItemsField = typeof(MainWindow).GetField("_radialItems", flags)!;
             var radialItems = (System.Collections.ObjectModel.ObservableCollection<RadialActionItem>)radialItemsField.GetValue(window)!;
 
-            // For PDF, RecommendationEngine returns 7 items: Show Info, Compress, Export, Extract, Word, PowerPoint, Preview
-            Assert.Equal(7, radialItems.Count);
+            // For PDF, RecommendationEngine returns 10 items: Show Info, Compress, Export, Extract, Word, PowerPoint, Preview, Merge, Split, Organize
+            Assert.Equal(10, radialItems.Count);
             Assert.Equal(ActionIds.ShowPdfInfo, radialItems[0].ActionId);
             Assert.True(radialItems[0].IsAvailable);
             Assert.Equal(ActionIds.CompressPdf, radialItems[1].ActionId);
@@ -175,6 +175,16 @@ public sealed class MainWindowSliderSyncTests
             Assert.Equal("IconPresentationGeometry", radialItems[5].IconKey);
             Assert.Equal(ActionIds.PreviewPdf, radialItems[6].ActionId);
             Assert.True(radialItems[6].IsAvailable);
+            Assert.Equal(ActionIds.MergePdf, radialItems[7].ActionId);
+            Assert.True(radialItems[7].IsAvailable);
+            Assert.Equal(ActionIds.SplitPdf, radialItems[8].ActionId);
+            Assert.True(radialItems[8].IsAvailable);
+            Assert.Equal("Split", radialItems[8].Title);
+            Assert.Equal("IconSplitGeometry", radialItems[8].IconKey);
+            Assert.Equal(ActionIds.OrganizePdf, radialItems[9].ActionId);
+            Assert.True(radialItems[9].IsAvailable);
+            Assert.Equal("Organize", radialItems[9].Title);
+            Assert.Equal("IconOrganizerGeometry", radialItems[9].IconKey);
 
             window.Close();
 
@@ -1785,4 +1795,304 @@ public sealed class MainWindowSliderSyncTests
             window.Close();
         });
     }
+
+    [Fact]
+    public void PresentationStudio_OpenAndClose_TogglesHostVisibility()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var presHost = (Grid)typeof(MainWindow).GetField("PresentationStudioHost", flags)!.GetValue(window)!;
+            var batchHost = (Grid)typeof(MainWindow).GetField("BatchStudioHost", flags)!.GetValue(window)!;
+            var docHost = (Grid)typeof(MainWindow).GetField("DocumentBuilderHost", flags)!.GetValue(window)!;
+            var navPresBtn = (Button)typeof(MainWindow).GetField("NavPresentationBtn", flags)!.GetValue(window)!;
+            var navWorkBtn = (Button)typeof(MainWindow).GetField("NavWorkspaceBtn", flags)!.GetValue(window)!;
+
+            Assert.Equal(Visibility.Collapsed, presHost.Visibility);
+
+            window.OpenPresentationStudio();
+            Assert.Equal(Visibility.Visible, presHost.Visibility);
+            Assert.Equal(Visibility.Collapsed, batchHost.Visibility);
+            Assert.Equal(Visibility.Collapsed, docHost.Visibility);
+            Assert.Equal("Active", navPresBtn.Tag);
+
+            window.ClosePresentationStudio();
+            Assert.Equal(Visibility.Collapsed, presHost.Visibility);
+            Assert.Null(navPresBtn.Tag);
+            Assert.Equal("Active", navWorkBtn.Tag);
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void PresentationStudio_SlideOperationsAndTheme_UpdatesUi()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            window.OpenPresentationStudio();
+
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var deckTitleBox = (TextBox)typeof(MainWindow).GetField("PresDeckTitleBox", flags)!.GetValue(window)!;
+            var slideIndexText = (TextBlock)typeof(MainWindow).GetField("PresEditorSlideIndexText", flags)!.GetValue(window)!;
+            var editTitleBox = (TextBox)typeof(MainWindow).GetField("PresEditSlideTitleBox", flags)!.GetValue(window)!;
+            var previewTitle = (TextBlock)typeof(MainWindow).GetField("PresSlidePreviewTitle", flags)!.GetValue(window)!;
+            var twoColBtn = (Button)typeof(MainWindow).GetField("PresLayoutTwoColBtn", flags)!.GetValue(window)!;
+            var secondaryBlock = (StackPanel)typeof(MainWindow).GetField("PresEditSecondaryBlock", flags)!.GetValue(window)!;
+            var classicNavyBtn = (Button)typeof(MainWindow).GetField("PresThemeClassicNavyBtn", flags)!.GetValue(window)!;
+            var bgColorBox = (TextBox)typeof(MainWindow).GetField("PresBgColorBox", flags)!.GetValue(window)!;
+            var aspect4x3Btn = (Button)typeof(MainWindow).GetField("PresAspect4x3Btn", flags)!.GetValue(window)!;
+            var previewBox = (Border)typeof(MainWindow).GetField("PresSlidePreviewBox", flags)!.GetValue(window)!;
+
+            // Default deck initialized with 1 slide
+            Assert.Equal("New Presentation", deckTitleBox.Text);
+            Assert.Equal("Slide 1 of 1", slideIndexText.Text);
+
+            // Change title
+            editTitleBox.Text = "Custom Project Title";
+            Assert.Equal("Custom Project Title", previewTitle.Text);
+
+            // Switch layout to TwoColumn
+            twoColBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(Visibility.Visible, secondaryBlock.Visibility);
+
+            // Switch Theme to Classic Navy
+            classicNavyBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal("#0F172A", bgColorBox.Text);
+
+            // Switch aspect ratio to 4:3
+            aspect4x3Btn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(480, previewBox.Width);
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void PresentationStudio_OutlineView_TransitionsToEditor()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            window.OpenPresentationStudio();
+
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var outlineView = (Grid)typeof(MainWindow).GetField("PresOutlineView", flags)!.GetValue(window)!;
+            var editorView = (Grid)typeof(MainWindow).GetField("PresEditorView", flags)!.GetValue(window)!;
+            var tabOutlineBtn = (Button)typeof(MainWindow).GetField("PresTabOutlineBtn", flags)!.GetValue(window)!;
+            var tabEditorBtn = (Button)typeof(MainWindow).GetField("PresTabEditorBtn", flags)!.GetValue(window)!;
+
+            // Switch to outline view
+            tabOutlineBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(Visibility.Visible, outlineView.Visibility);
+            Assert.Equal(Visibility.Collapsed, editorView.Visibility);
+
+            // Switch back to editor view
+            tabEditorBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(Visibility.Collapsed, outlineView.Visibility);
+            Assert.Equal(Visibility.Visible, editorView.Visibility);
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void HeroConvertBtn_VisibleForConvertibleFiles_CollapsedForOthers()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var tempDir = Path.Combine(Path.GetTempPath(), "smartshift-ui-convert-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            var testPng = Path.Combine(tempDir, "sample.png");
+            using (var surface = SKSurface.Create(new SKImageInfo(16, 16, SKColorType.Rgba8888, SKAlphaType.Premul)))
+            {
+                surface.Canvas.Clear(SKColors.Red);
+                using var image = surface.Snapshot();
+                using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+                using var stream = File.OpenWrite(testPng);
+                data.SaveTo(stream);
+            }
+
+            var testDocx = Path.Combine(tempDir, "sample.docx");
+            File.WriteAllBytes(testDocx, [1, 2, 3]);
+
+            try
+            {
+                var ingestMethod = typeof(MainWindow).GetMethod("IngestAsync", flags)!;
+
+                // Ingest PNG
+                var ingestPngTask = (Task)ingestMethod.Invoke(window, new object[] { new[] { testPng } })!;
+                WaitForTask(ingestPngTask);
+
+                var heroConvertBtn = (Button)window.FindName("HeroConvertBtn");
+                Assert.NotNull(heroConvertBtn);
+                Assert.Equal(Visibility.Visible, heroConvertBtn.Visibility);
+
+                // Ingest DOCX
+                var ingestDocxTask = (Task)ingestMethod.Invoke(window, new object[] { new[] { testDocx } })!;
+                WaitForTask(ingestDocxTask);
+
+                // Select the DOCX item
+                var fileList = (ListBox)window.FindName("FileList");
+                fileList.SelectedIndex = 1;
+
+                Assert.Equal(Visibility.Collapsed, heroConvertBtn.Visibility);
+            }
+            finally
+            {
+                window.Close();
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        });
+    }
+
+    [Fact]
+    public void OpenUnifiedConvert_DynamicallyPopulatesTargets_AndSwitchesPanels()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var tempDir = Path.Combine(Path.GetTempPath(), "smartshift-ui-convert2-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            var testPng = Path.Combine(tempDir, "sample.png");
+            using (var surface = SKSurface.Create(new SKImageInfo(16, 16, SKColorType.Rgba8888, SKAlphaType.Premul)))
+            {
+                surface.Canvas.Clear(SKColors.Red);
+                using var image = surface.Snapshot();
+                using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+                using var stream = File.OpenWrite(testPng);
+                data.SaveTo(stream);
+            }
+
+            try
+            {
+                var ingestMethod = typeof(MainWindow).GetMethod("IngestAsync", flags)!;
+                var ingestTask = (Task)ingestMethod.Invoke(window, new object[] { new[] { testPng } })!;
+                WaitForTask(ingestTask);
+
+                // Open unified convert
+                window.OpenUnifiedConvert();
+
+                Assert.True(window.IsUnifiedConvertActive);
+
+                var convertOptionsView = (StackPanel)window.FindName("UnifiedConvertOptionsView");
+                Assert.Equal(Visibility.Visible, convertOptionsView.Visibility);
+
+                var targetsPanel = (WrapPanel)window.FindName("UnifiedTargetFormatsPanel");
+                Assert.NotNull(targetsPanel);
+                // PNG has 2 targets: WebP, JPEG
+                Assert.Equal(2, targetsPanel.Children.Count);
+
+                // Initial target selected is WebP -> UnifiedImageQualityPanel must be visible
+                var qualityPanel = (StackPanel)window.FindName("UnifiedImageQualityPanel");
+                Assert.Equal(Visibility.Visible, qualityPanel.Visibility);
+
+                var rangePanel = (StackPanel)window.FindName("UnifiedPdfRangePanel");
+                Assert.Equal(Visibility.Collapsed, rangePanel.Visibility);
+
+                // Switch to JPEG target
+                var jpegBtn = targetsPanel.Children.OfType<Button>().First(b => (DetectedFormat)b.Tag == DetectedFormat.Jpeg);
+                var clickMethod = typeof(MainWindow).GetMethod("UnifiedTargetFormatButton_Click", flags)!;
+                clickMethod.Invoke(window, new object[] { jpegBtn, new RoutedEventArgs() });
+
+                Assert.Equal(DetectedFormat.Jpeg, window.SelectedUnifiedTargetFormat);
+                Assert.Equal(Visibility.Visible, qualityPanel.Visibility);
+
+                // Quality slider synchronization
+                var slider = (Slider)window.FindName("UnifiedQualitySlider");
+                var box = (TextBox)window.FindName("UnifiedQualityBox");
+                var badge = (TextBlock)window.FindName("UnifiedQualityValueBadge");
+
+                slider.Value = 75;
+                Assert.Equal("75", box.Text);
+                Assert.Equal("75%", badge.Text);
+
+                box.Text = "90";
+                Assert.Equal(90, (int)slider.Value);
+                Assert.Equal("90%", badge.Text);
+
+                // Cancel button closes unified convert view
+                var cancelBtn = (Button)window.FindName("CancelButton");
+                var cancelMethod = typeof(MainWindow).GetMethod("CancelAction_Click", flags)!;
+                cancelMethod.Invoke(window, new object[] { cancelBtn, new RoutedEventArgs() });
+
+                Assert.False(window.IsUnifiedConvertActive);
+                Assert.Equal(Visibility.Collapsed, convertOptionsView.Visibility);
+            }
+            finally
+            {
+                window.Close();
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        });
+    }
+
+    [Fact]
+    public void OpenUnifiedConvert_WithPdf_ExposesOfficeAndImageTargets()
+    {
+        RunOnSta(() =>
+        {
+            var window = new MainWindow();
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var tempDir = Path.Combine(Path.GetTempPath(), "smartshift-ui-convert3-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            var testPdf = Path.Combine(tempDir, "sample.pdf");
+            using (var doc = new PdfSharp.Pdf.PdfDocument())
+            {
+                doc.AddPage();
+                doc.Save(testPdf);
+            }
+
+            try
+            {
+                var ingestMethod = typeof(MainWindow).GetMethod("IngestAsync", flags)!;
+                var ingestTask = (Task)ingestMethod.Invoke(window, new object[] { new[] { testPdf } })!;
+                WaitForTask(ingestTask);
+
+                window.OpenUnifiedConvert();
+                Assert.True(window.IsUnifiedConvertActive);
+
+                var targetsPanel = (WrapPanel)window.FindName("UnifiedTargetFormatsPanel");
+                // PDF has 5 targets: Docx, Pptx, Txt, Png, Jpeg
+                Assert.Equal(5, targetsPanel.Children.Count);
+
+                // Initial target is Docx
+                Assert.Equal(DetectedFormat.Docx, window.SelectedUnifiedTargetFormat);
+
+                var rangePanel = (StackPanel)window.FindName("UnifiedPdfRangePanel");
+                Assert.Equal(Visibility.Visible, rangePanel.Visibility);
+
+                var pptxPanel = (StackPanel)window.FindName("UnifiedPptxModePanel");
+                Assert.Equal(Visibility.Collapsed, pptxPanel.Visibility);
+
+                // Select PPTX
+                window.SelectUnifiedTarget(DetectedFormat.Pptx);
+                Assert.Equal(Visibility.Visible, pptxPanel.Visibility);
+
+                // Select Text
+                window.SelectUnifiedTarget(DetectedFormat.Txt);
+                Assert.Equal(Visibility.Collapsed, pptxPanel.Visibility);
+                Assert.Equal(Visibility.Visible, rangePanel.Visibility);
+
+                // Select PNG images
+                window.SelectUnifiedTarget(DetectedFormat.Png);
+                var dpiPanel = (StackPanel)window.FindName("UnifiedPdfDpiPanel");
+                Assert.Equal(Visibility.Visible, dpiPanel.Visibility);
+            }
+            finally
+            {
+                window.Close();
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        });
+    }
+
 }

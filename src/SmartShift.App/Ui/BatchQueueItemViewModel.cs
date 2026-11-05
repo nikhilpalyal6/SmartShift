@@ -3,7 +3,9 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media;
 using SmartShift.Core.Classification;
+using SmartShift.Core.Images;
 using SmartShift.Core.IO;
+using SmartShift.Processing;
 using SmartShift.Processing.Batch;
 
 namespace SmartShift.App.Ui;
@@ -16,6 +18,8 @@ public sealed class BatchQueueItemViewModel : INotifyPropertyChanged
     private string? _resultMessage;
     private IReadOnlyDictionary<string, string>? _details;
     private bool _isSelected;
+    private ImageMetadataInfo? _metadata;
+    private ProcessingOptions? _customOptions;
 
     public BatchQueueItemViewModel(ClassifiedFile file)
     {
@@ -162,6 +166,35 @@ public sealed class BatchQueueItemViewModel : INotifyPropertyChanged
             }
         }
     }
+
+    public ImageMetadataInfo? Metadata
+    {
+        get => _metadata;
+        set
+        {
+            if (_metadata != value)
+            {
+                _metadata = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public ProcessingOptions? CustomOptions
+    {
+        get => _customOptions;
+        set
+        {
+            if (_customOptions != value)
+            {
+                _customOptions = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasCustomOptions));
+            }
+        }
+    }
+
+    public bool HasCustomOptions => _customOptions != null;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

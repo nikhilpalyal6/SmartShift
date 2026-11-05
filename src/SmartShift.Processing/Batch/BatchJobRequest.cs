@@ -7,4 +7,5 @@ public sealed record BatchJobRequest(
     string ActionId,
     ProcessingOptions Options,
     string OutputDirectory,
-    int MaxConcurrency = 1);
+    int MaxConcurrency = 1,
+    IReadOnlyDictionary<string, ProcessingOptions>? FileOptionOverrides = null);
